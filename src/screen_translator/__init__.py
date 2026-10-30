@@ -1,4 +1,4 @@
-"""ScreenTranslator: dịch chữ tiếng Nhật trên màn hình sang tiếng Anh, chạy offline (manga-ocr + Ollama)."""
+"""ScreenTranslator: dịch chữ tiếng Nhật trên màn hình sang tiếng Anh, chạy offline (OneOCR / manga-ocr + Ollama)."""
 
 import argparse
 import logging
@@ -35,18 +35,25 @@ def translate_file(path: Path) -> None:
     from PIL import Image
 
     from . import config
+    from .glossary import Glossary
     from .layout import group_lines, has_japanese
     from .ocr import create_reader
     from .translate import tidy, translate
 
     sys.stdout.reconfigure(encoding="utf-8")
     cfg = config.load()
+    glossary = Glossary(config.GLOSSARY_PATH).entries()
     reader = create_reader(cfg.ocr_engine, cfg.ocr_device)
     client = ollama.Client()
     start = time.perf_counter()
     blocks = [b for b in group_lines(reader.read_lines(Image.open(path))) if has_japanese(b.text)]
     ocr_s = time.perf_counter() - start
     for b in blocks:
-        en, _ = translate(client, cfg.model, b.text, options=cfg.ollama_options, keep_alive=cfg.keep_alive)
+        en, _ = translate(
+            client, cfg.model, b.text, glossary=glossary, options=cfg.ollama_options, keep_alive=cfg.keep_alive
+        )
         print(f"[{b.left},{b.top}–{b.right},{b.bottom}] {b.text}\n  → {tidy(en)}")
-    print(f"({len(blocks)} khối; OCR {ocr_s:.2f}s, dịch {time.perf_counter() - start - ocr_s:.2f}s)")
+    print(
+        f"({len(blocks)} khối; OCR {ocr_s:.2f}s, dịch {time.perf_counter() - start - ocr_s:.2f}s;"
+        f" glossary {len(glossary)} mục)"
+    )

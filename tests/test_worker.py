@@ -1,5 +1,6 @@
 import threading
 from dataclasses import replace
+from pathlib import Path
 from typing import ClassVar
 
 import ollama
@@ -9,6 +10,7 @@ from PIL import Image
 
 from screen_translator import worker as worker_module
 from screen_translator.config import Config
+from screen_translator.glossary import Entry
 from screen_translator.layout import TextBox
 from screen_translator.worker import UNTRANSLATED, Item, Worker, describe_error
 
@@ -33,7 +35,14 @@ def fake_create_reader(engine, device):
 @pytest.fixture
 def fake(monkeypatch):
     """Thay OCR và Ollama bằng đồ giả; ghi lại các lần gọi."""
-    state = {"translated": [], "unloaded": [], "release": threading.Event(), "fail": {}, "slow": set()}
+    state = {
+        "translated": [],
+        "glossaries": [],
+        "unloaded": [],
+        "release": threading.Event(),
+        "fail": {},
+        "slow": set(),
+    }
     state["release"].set()
     FakeReader.created = []
 
@@ -45,6 +54,7 @@ def fake(monkeypatch):
         if ja in state["fail"]:
             raise state["fail"][ja]
         state["translated"].append((model, ja, kwargs["options"]))
+        state["glossaries"].append(kwargs.get("glossary"))
         return f"「{ja}」 in English", None
 
     monkeypatch.setattr(worker_module, "create_reader", fake_create_reader)
@@ -53,8 +63,9 @@ def fake(monkeypatch):
     return state
 
 
-def start(qapp, config: Config | None = None, cache_path=":memory:"):
-    w = Worker(config or Config(), cache_path=cache_path)
+def start(qapp, config: Config | None = None, cache_path=":memory:", glossary_path: Path | None = None):
+    # mặc định một file chưa tồn tại: không bao giờ đọc glossary thật của người dùng
+    w = Worker(config or Config(), cache_path=cache_path, glossary_path=glossary_path or Path("không-có.txt"))
     events = {"result": [], "failed": [], "status": []}
     w.result.connect(lambda *args: events["result"].append(args))
     w.failed.connect(lambda *args: events["failed"].append(args))
@@ -160,6 +171,39 @@ def test_errors_are_reported_in_plain_words(qapp, fake):
         (empty, "Không thấy chữ tiếng Nhật trong vùng này."),
         (job, "Không kết nối được Ollama. Hãy mở Ollama rồi thử lại."),
     ]
+
+
+def test_glossary_reaches_the_model_and_editing_it_retranslates(qapp, fake, tmp_path):
+    glossary = tmp_path / "glossary.txt"
+    glossary.write_text("霊夢 = Reimu (nữ)\n実績 = Achievements\n", encoding="utf-8")
+    room, label = TextBox("霊夢の部屋", 20, 300, 90, 317), TextBox("実績", 1500, 980, 1540, 1000)
+    w, events = start(qapp, glossary_path=glossary)
+    w.submit_image(screen(room, label, DIALOG))
+    wait_until(qapp, lambda: finished(events))
+    first = {item.ja: item.en for item in finished(events)[0][1]}
+    assert first["霊夢の部屋"] == "“霊夢の部屋” in English"
+    assert first["実績"] == "Achievements"  # nhãn trùng hẳn một mục: khỏi gọi model
+    assert sorted(ja for _, ja, _ in fake["translated"][1:]) == sorted(["霊夢の部屋", DIALOG.text])
+    assert all(g == [Entry("霊夢", "Reimu", "Female"), Entry("実績", "Achievements")] for g in fake["glossaries"][1:])
+
+    glossary.write_text("霊夢 = Reimu Hakurei (nữ)\n", encoding="utf-8")  # sửa tên
+    fake["translated"].clear()
+    w.submit_image(screen(room, label, DIALOG))
+    wait_until(qapp, lambda: len(finished(events)) == 2)
+    w.stop()
+    # chỉ khối có tên vừa sửa phải dịch lại; câu thoại không có tên lấy từ cache; "実績" giờ phải qua model
+    assert sorted(ja for _, ja, _ in fake["translated"]) == ["実績", "霊夢の部屋"]
+
+
+def test_unreadable_glossary_is_reported_and_translation_goes_on(qapp, fake, tmp_path):
+    glossary = tmp_path / "glossary.txt"
+    glossary.write_bytes("霊夢 = Reimu".encode("shift_jis"))  # Notepad lưu nhầm kiểu ANSI
+    w, events = start(qapp, glossary_path=glossary)
+    w.submit_text("霊夢")
+    wait_until(qapp, lambda: finished(events))
+    w.stop()
+    assert any("glossary.txt" in message and is_error for message, is_error in events["status"])
+    assert finished(events)[0][1][0].en == "“霊夢” in English"
 
 
 def test_falls_back_to_manga_ocr_when_oneocr_is_missing(qapp, fake, monkeypatch):

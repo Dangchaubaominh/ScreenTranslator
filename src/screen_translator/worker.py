@@ -12,7 +12,8 @@ from PIL import Image
 from PySide6.QtCore import QObject, Signal
 
 from .cache import TranslationCache
-from .config import APP_DIR, OCR_ENGINES, Config
+from .config import APP_DIR, GLOSSARY_PATH, OCR_ENGINES, Config
+from .glossary import Entry, Glossary, exact, relevant, signature
 from .layout import group_lines, has_japanese
 from .ocr import MangaOcrReader, create_reader
 from .translate import tidy, translate, unload
@@ -49,10 +50,11 @@ class Worker(QObject):
     failed = Signal(int, str)  # mã lượt, thông báo lỗi
     status = Signal(str, bool)  # trạng thái, có phải lỗi không
 
-    def __init__(self, config: Config, cache_path: Path | str = CACHE_PATH):
+    def __init__(self, config: Config, cache_path: Path | str = CACHE_PATH, glossary_path: Path = GLOSSARY_PATH):
         super().__init__()
         self._config = config
         self._cache_path = cache_path
+        self._glossary = Glossary(glossary_path)
         self._jobs: queue.Queue = queue.Queue()
         self._latest = 0
         self._client = ollama.Client()
@@ -122,15 +124,15 @@ class Worker(QObject):
             self.failed.emit(job_id, "Không thấy chữ tiếng Nhật trong vùng này.")
             return
 
-        model = self._config.model
-        cached = [self._cache.get(model, item.ja) for item in items]
-        # khối có sẵn trong cache hiện ngay; sau đó câu dài (thường là lời thoại) trước nhãn ngắn
-        order = sorted(range(len(items)), key=lambda i: (cached[i] is None, -len(items[i].ja)))
+        glossary = self._read_glossary()
+        known = [self._known(item.ja, glossary) for item in items]
+        # khối có sẵn bản dịch hiện ngay; sau đó câu dài (thường là lời thoại) trước nhãn ngắn
+        order = sorted(range(len(items)), key=lambda i: (known[i] is None, -len(items[i].ja)))
         for done, i in enumerate(order, start=1):
             if job_id != self._latest:
                 log.info("Lượt %d dừng giữa chừng: đã có lượt mới hơn", job_id)
                 return
-            items[i] = replace(items[i], en=cached[i] or self._translate(items[i].ja))
+            items[i] = replace(items[i], en=known[i] or self._translate(items[i].ja, glossary))
             self.result.emit(job_id, list(items), done == len(items))
         log.info(
             "Lượt %d: %d khối, OCR %.2fs, dịch %.2fs | %s",
@@ -141,12 +143,26 @@ class Worker(QObject):
             " | ".join(f"{item.ja} → {item.en}" for item in items),
         )
 
-    def _translate(self, ja: str) -> str:
+    def _read_glossary(self) -> list[Entry]:
+        try:
+            return self._glossary.entries()
+        except (OSError, UnicodeDecodeError) as e:
+            log.warning("Không đọc được glossary: %s", e)
+            self.status.emit(f"Không đọc được {self._glossary.path.name} (cần lưu dạng UTF-8): {e}", True)
+            return []
+
+    def _known(self, ja: str, glossary: list[Entry]) -> str | None:
+        """Bản dịch có ngay: khai sẵn trong glossary, hoặc đã dịch trước đây với đúng các tên riêng hiện tại."""
+        terms = relevant(glossary, ja)
+        return exact(terms, ja) or self._cache.get(self._config.model, ja, glossary=signature(terms))
+
+    def _translate(self, ja: str, glossary: list[Entry]) -> str:
         try:
             text, _ = translate(
                 self._client,
                 self._config.model,
                 ja,
+                glossary=glossary,
                 options=self._config.ollama_options,
                 keep_alive=self._config.keep_alive,
             )
@@ -158,7 +174,7 @@ class Worker(QObject):
         en = tidy(text)
         if not en:
             return UNTRANSLATED
-        self._cache.put(self._config.model, ja, en)
+        self._cache.put(self._config.model, ja, en, glossary=signature(relevant(glossary, ja)))
         return en
 
     def _load_reader(self) -> None:

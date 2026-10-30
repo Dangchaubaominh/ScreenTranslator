@@ -1,6 +1,10 @@
 """Dịch JA→EN qua Ollama. Mỗi loại model cần một kiểu prompt riêng (xem PLAN.md mục 6)."""
 
+from collections.abc import Sequence
+
 import ollama
+
+from .glossary import Entry, exact, relevant, substitute, vntl_metadata
 
 DEFAULT_MODEL = "hf.co/lmg-anon/vntl-gemma2-2b-gguf:Q6_K"
 
@@ -33,8 +37,8 @@ def style_of(tag: str) -> str:
     return "chat"
 
 
-def vntl_prompt(ja: str) -> str:
-    return f"<<METADATA>>\n<<TRANSLATE>>\n<<JAPANESE>>\n{ja}\n<<ENGLISH>>\n"
+def vntl_prompt(ja: str, glossary: Sequence[Entry] = ()) -> str:
+    return f"<<METADATA>>\n{vntl_metadata(glossary)}<<TRANSLATE>>\n<<JAPANESE>>\n{ja}\n<<ENGLISH>>\n"
 
 
 def translategemma_prompt(ja: str) -> str:
@@ -63,8 +67,23 @@ def keep_lines(en: str, ja: str) -> str:
     return "\n".join(lines[: ja.strip().count("\n") + 1])
 
 
-def translate(client: ollama.Client, tag: str, ja: str, *, options: dict | None = None, keep_alive: str = "30m"):
-    """Dịch một đoạn. Trả về (bản dịch, phản hồi gốc của Ollama để đọc số liệu thời gian)."""
+def translate(
+    client: ollama.Client,
+    tag: str,
+    ja: str,
+    *,
+    glossary: Sequence[Entry] = (),
+    options: dict | None = None,
+    keep_alive: str = "30m",
+):
+    """Dịch một đoạn. Trả về (bản dịch, phản hồi gốc của Ollama để đọc số liệu thời gian).
+
+    glossary: cả danh sách tên riêng / thuật ngữ, chỉ các mục có trong `ja` vào prompt. Cả đoạn trùng một mục
+    thì trả luôn bản dịch khai sẵn, phản hồi là None.
+    """
+    terms = relevant(glossary, ja)
+    if (known := exact(terms, ja)) is not None:
+        return known, None
     style = style_of(tag)
     opts = {"num_ctx": 2048, "num_predict": max_tokens(ja), **_STYLE_OPTIONS[style], **(options or {})}
     if style == "vntl":
@@ -72,18 +91,19 @@ def translate(client: ollama.Client, tag: str, ja: str, *, options: dict | None 
         stop = ["<<", "<eos>"] + ([] if "\n" in ja.strip() else ["\n"])
         r = client.generate(
             model=tag,
-            prompt=vntl_prompt(ja),
+            prompt=vntl_prompt(ja, terms),
             raw=True,
             options={**opts, "stop": stop},
             keep_alive=keep_alive,
         )
         return keep_lines(r.response, ja), r
 
+    source = substitute(ja, terms)  # các model khác không có chỗ khai báo tên: thay thẳng trong câu
     if style == "translategemma":
-        messages = [{"role": "user", "content": translategemma_prompt(ja)}]
+        messages = [{"role": "user", "content": translategemma_prompt(source)}]
     else:
         system = "Translate to English." if style == "lfm2" else SYSTEM_PROMPT
-        messages = [{"role": "system", "content": system}, {"role": "user", "content": ja}]
+        messages = [{"role": "system", "content": system}, {"role": "user", "content": source}]
     think = {"think": False} if tag.lower().startswith("qwen3") else {}
     r = client.chat(model=tag, messages=messages, options=opts, keep_alive=keep_alive, **think)
     return keep_lines(r.message.content, ja), r

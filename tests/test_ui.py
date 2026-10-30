@@ -181,6 +181,16 @@ def test_selected_region_with_one_block_is_covered_whole(qapp, monkeypatch):
     tray_app.hotkeys.clear()
 
 
+def test_glossary_menu_creates_and_opens_the_file(qapp, monkeypatch, tmp_path):
+    tray_app, _ = make_tray_app(monkeypatch)
+    path, opened = tmp_path / "glossary.txt", []
+    monkeypatch.setattr(app_module, "GLOSSARY_PATH", path)
+    monkeypatch.setattr(app_module.os, "startfile", opened.append)
+    tray_app.open_glossary()
+    assert opened == [path] and path.read_text(encoding="utf-8").startswith("# Tên riêng")
+    tray_app.hotkeys.clear()
+
+
 def test_window_translation_puts_each_block_over_its_own_text(qapp, monkeypatch):
     tray_app, _ = make_tray_app(monkeypatch)
     monitor = app_module.capture.Monitor(0, 0, 1920, 1080)

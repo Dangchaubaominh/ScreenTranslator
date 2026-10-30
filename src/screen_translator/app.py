@@ -12,7 +12,8 @@ from PySide6.QtWidgets import QApplication, QDialog, QMenu, QSystemTrayIcon
 
 from . import capture, win32
 from . import config as config_store
-from .config import HOTKEY_LABELS
+from .config import GLOSSARY_PATH, HOTKEY_LABELS
+from .glossary import ensure_file
 from .hotkeys import HotkeyWindow
 from .ui.dialogs import EditDialog, SettingsDialog
 from .ui.overlay import Overlay
@@ -70,6 +71,7 @@ class TrayApp(QObject):
             # chờ menu đóng hẳn rồi mới chụp màn hình, không thì ảnh chụp dính cả menu
             menu_action.triggered.connect(lambda *_, handler=self._handlers[action]: QTimer.singleShot(200, handler))
         self.menu.addSeparator()
+        self.menu.addAction("Tên riêng, thuật ngữ…").triggered.connect(self.open_glossary)
         self.menu.addAction("Cài đặt…").triggered.connect(self.open_settings)
         self.menu.addAction("Thoát").triggered.connect(self.quit)
         self.tray = QSystemTrayIcon(make_icon())
@@ -239,6 +241,14 @@ class TrayApp(QObject):
         self.edit_dialog.show()
         self.edit_dialog.raise_()
         self.edit_dialog.activateWindow()
+
+    def open_glossary(self) -> None:
+        """Mở glossary.txt bằng trình sửa mặc định (Notepad). Lưu xong thì lượt dịch sau dùng ngay."""
+        try:
+            os.startfile(ensure_file(GLOSSARY_PATH))
+        except OSError as e:
+            log.exception("Không mở được glossary")
+            self.notify(f"Không mở được {GLOSSARY_PATH}: {e}", warning=True)
 
     def open_settings(self) -> None:
         try:

@@ -2,6 +2,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from screen_translator.glossary import Entry
 from screen_translator.translate import (
     SYSTEM_PROMPT,
     keep_lines,
@@ -106,6 +107,32 @@ def test_other_chat_models_get_no_think_flag():
     client = FakeClient()
     translate(client, "qwen2.5:3b", "猫")
     assert "think" not in client.calls[0][1]
+
+
+GLOSSARY = [Entry("霊夢", "Reimu", "Female"), Entry("実績", "Achievements"), Entry("咲夜", "Sakuya", "Female")]
+
+
+def test_vntl_prompt_declares_only_the_names_in_the_text():
+    client = FakeClient()
+    translate(client, "vntl-gemma2-2b", "霊夢の実績", glossary=GLOSSARY)
+    assert client.calls[0][1]["prompt"] == (
+        "<<METADATA>>\n"
+        "[character] Name: Reimu (霊夢) | Gender: Female\n"
+        "[term] 実績: Achievements\n"
+        "<<TRANSLATE>>\n<<JAPANESE>>\n霊夢の実績\n<<ENGLISH>>\n"
+    )
+
+
+def test_a_label_that_is_a_glossary_entry_skips_the_model():
+    client = FakeClient()
+    assert translate(client, "vntl-gemma2-2b", " 実績 ", glossary=GLOSSARY) == ("Achievements", None)
+    assert client.calls == []
+
+
+def test_other_models_get_names_replaced_in_the_text():
+    client = FakeClient()
+    translate(client, "qwen2.5:3b", "咲夜は猫", glossary=GLOSSARY)
+    assert client.calls[0][1]["messages"][1] == {"role": "user", "content": "Sakuyaは猫"}
 
 
 def test_tidy_turns_japanese_quotes_into_english_ones():
