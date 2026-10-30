@@ -74,7 +74,7 @@ class Region:
 
 def monitor_at(x: int, y: int) -> Monitor:
     """Màn hình chứa điểm (x, y) tính bằng pixel thật; không thấy thì lấy màn hình chính."""
-    with mss.mss() as sct:
+    with mss.MSS() as sct:
         found = next(
             (
                 m
@@ -87,7 +87,7 @@ def monitor_at(x: int, y: int) -> Monitor:
 
 
 def grab(left: int, top: int, width: int, height: int) -> Image.Image:
-    with mss.mss() as sct:
+    with mss.MSS() as sct:
         shot = sct.grab({"left": left, "top": top, "width": width, "height": height})
     return Image.frombytes("RGB", shot.size, shot.rgb)
 

@@ -66,10 +66,11 @@ def fake(monkeypatch):
 def start(qapp, config: Config | None = None, cache_path=":memory:", glossary_path: Path | None = None):
     # mặc định một file chưa tồn tại: không bao giờ đọc glossary thật của người dùng
     w = Worker(config or Config(), cache_path=cache_path, glossary_path=glossary_path or Path("không-có.txt"))
-    events = {"result": [], "failed": [], "status": []}
+    events = {"result": [], "failed": [], "status": [], "idle": []}
     w.result.connect(lambda *args: events["result"].append(args))
     w.failed.connect(lambda *args: events["failed"].append(args))
     w.status.connect(lambda *args: events["status"].append(args))
+    w.idle.connect(lambda *args: events["idle"].append(args))
     w.start()
     return w, events
 
@@ -204,6 +205,39 @@ def test_unreadable_glossary_is_reported_and_translation_goes_on(qapp, fake, tmp
     w.stop()
     assert any("glossary.txt" in message and is_error for message, is_error in events["status"])
     assert finished(events)[0][1][0].en == "“霊夢” in English"
+
+
+def run_live(qapp, w, events, image, *, settled):
+    """Gửi một lượt live, chờ xong; trả về "idle" hoặc danh sách bản dịch đã hiện."""
+    done, idle = len(finished(events)), len(events["idle"])
+    job = w.submit_live(image, settled=settled)
+    wait_until(qapp, lambda: len(finished(events)) > done or len(events["idle"]) > idle)
+    if len(events["idle"]) > idle:
+        assert events["idle"][-1] == (job,)
+        return "idle"
+    assert finished(events)[-1][0] == job
+    return [item.en for item in finished(events)[-1][1]]
+
+
+def test_live_mode_shows_each_new_line_once(qapp, fake):
+    w, events = start(qapp)
+    typing = TextBox("枕元に何か", 410, 810, 700, 846)
+    line = TextBox("枕元に何かが転がっていた。", 410, 810, 900, 846)
+
+    def live(*boxes, settled):
+        return run_live(qapp, w, events, screen(*boxes), settled=settled)
+
+    assert live(DIALOG, settled=True) == ["“自分が寝ていた部屋に戻ると、” in English"]
+    assert live(DIALOG, settled=True) == "idle"  # mũi tên nhấp nháy: chữ như cũ
+    assert live(typing, settled=False) == "idle"  # câu sau đang chạy chữ
+    assert live(line, settled=False) == "idle"  # đủ câu nhưng mới đọc được một lần
+    assert live(line, settled=False) == ["“枕元に何かが転がっていた。” in English"]  # đọc lần hai vẫn vậy
+    assert live(VERSION, settled=True) == []  # khung thoại trống / chuyển cảnh: bỏ bản dịch cũ
+    assert live(VERSION, settled=True) == "idle"
+    w.reset_live()  # bật lại live mode: hiện lại tình trạng hiện tại
+    assert live(VERSION, settled=True) == []
+    w.stop()
+    assert [ja for _, ja, _ in fake["translated"][1:]] == [DIALOG.text, line.text]  # câu dở không bị dịch
 
 
 def test_falls_back_to_manga_ocr_when_oneocr_is_missing(qapp, fake, monkeypatch):

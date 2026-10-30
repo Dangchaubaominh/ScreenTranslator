@@ -31,4 +31,4 @@ def test_profiles():
     light, heavy = Config(profile="light"), Config(profile="heavy")
     assert (light.ocr_device, light.ollama_options) == ("gpu", {})
     assert (heavy.ocr_device, heavy.ollama_options) == ("cpu", {"num_gpu": 0})
-    assert list(light.hotkeys) == ["select", "screen", "repeat", "toggle", "edit"]
+    assert list(light.hotkeys) == ["select", "screen", "repeat", "live", "toggle", "edit"]

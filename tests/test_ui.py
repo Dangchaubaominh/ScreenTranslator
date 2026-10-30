@@ -133,10 +133,12 @@ class FakeWorker(QObject):
     result = Signal(int, object, bool)
     failed = Signal(int, str)
     status = Signal(str, bool)
+    idle = Signal(int)
 
     def __init__(self, config):
         super().__init__()
         self.jobs = []
+        self.live_resets = 0
 
     def start(self):
         pass
@@ -144,6 +146,13 @@ class FakeWorker(QObject):
     def submit_image(self, image):
         self.jobs.append(image)
         return len(self.jobs)
+
+    def submit_live(self, image, *, settled):
+        self.jobs.append(("live", settled))
+        return len(self.jobs)
+
+    def reset_live(self):
+        self.live_resets += 1
 
 
 def make_tray_app(monkeypatch):
@@ -178,6 +187,62 @@ def test_selected_region_with_one_block_is_covered_whole(qapp, monkeypatch):
     tray_app.toggle_overlay()
     assert tray_app.overlay.isVisible()
     tray_app.overlay.hide()
+    tray_app.hotkeys.clear()
+
+
+class FakeWatcher:
+    def __init__(self):
+        self.events, self.forgotten = [], 0
+
+    def update(self, frame, now):
+        return self.events.pop(0) if self.events else None
+
+    def forget(self):
+        self.forgotten += 1
+
+
+def test_live_mode_needs_a_region_first(qapp, monkeypatch):
+    tray_app, messages = make_tray_app(monkeypatch)
+    tray_app.toggle_live()
+    assert not tray_app.live_timer.isActive() and "Ctrl+Alt+T" in messages[-1]
+    assert not tray_app._menu_actions["live"].isChecked()
+    tray_app.hotkeys.clear()
+
+
+def test_live_mode_sends_one_frame_at_a_time_and_follows_results(qapp, monkeypatch):
+    tray_app, _ = make_tray_app(monkeypatch)
+    worker = tray_app.worker
+    monitor = app_module.capture.Monitor(0, 0, 1920, 1080)
+    tray_app._submit_image(
+        app_module.capture.Region.from_physical(monitor, (0, 0), 1.0, 400, 800, 1600, 1000),
+        Image.new("RGB", (1200, 200)),
+        selection=True,
+    )
+    tray_app.overlay.excluded_from_capture = True
+    monkeypatch.setattr(app_module.capture, "grab_region", lambda area: Image.new("RGB", (area.width, area.height)))
+    tray_app.toggle_live()
+    assert tray_app.live_timer.isActive() and tray_app._menu_actions["live"].isChecked()
+    assert worker.live_resets == 1
+    tray_app.watcher = watcher = FakeWatcher()
+
+    watcher.events = ["settled", "moving"]
+    tray_app._live_tick()
+    tray_app._live_tick()  # lượt trước chưa xong: không chụp, không gửi thêm
+    assert worker.jobs[1:] == [("live", True)] and watcher.events == ["moving"]
+
+    worker.idle.emit(2)  # chữ không đổi
+    tray_app._live_tick()
+    assert worker.jobs[-1] == ("live", False)
+
+    worker.result.emit(3, [Item("猫", "Cat", (5, 5, 40, 30))], True)  # câu mới
+    assert watcher.forgotten == 1 and tray_app.overlay.isVisible()
+    watcher.events = ["settled"]
+    tray_app._live_tick()
+    worker.result.emit(4, [], True)  # khung thoại trống
+    assert not tray_app.overlay.isVisible() and tray_app.last_en == "Cat"
+
+    tray_app.toggle_live()
+    assert not tray_app.live_timer.isActive() and not tray_app._menu_actions["live"].isChecked()
     tray_app.hotkeys.clear()
 
 

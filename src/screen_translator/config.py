@@ -36,6 +36,7 @@ HOTKEY_LABELS = {
     "select": "Chọn vùng mới và dịch",
     "screen": "Dịch cả cửa sổ game",
     "repeat": "Dịch lại vùng trước",
+    "live": "Live mode: tự dịch câu mới trong vùng",
     "toggle": "Ẩn / hiện bản dịch",
     "edit": "Sửa chữ OCR gần nhất",
 }
@@ -49,6 +50,7 @@ class Config:
     hotkey_select: str = "Ctrl+Alt+T"
     hotkey_screen: str = "Ctrl+Alt+F"
     hotkey_repeat: str = "Ctrl+Alt+R"
+    hotkey_live: str = "Ctrl+Alt+L"
     hotkey_toggle: str = "Ctrl+Alt+H"
     hotkey_edit: str = "Ctrl+Alt+E"
 

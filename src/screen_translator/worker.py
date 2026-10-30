@@ -49,6 +49,7 @@ class Worker(QObject):
     result = Signal(int, object, bool)
     failed = Signal(int, str)  # mã lượt, thông báo lỗi
     status = Signal(str, bool)  # trạng thái, có phải lỗi không
+    idle = Signal(int)  # lượt live mode xong mà không có gì mới để hiện
 
     def __init__(self, config: Config, cache_path: Path | str = CACHE_PATH, glossary_path: Path = GLOSSARY_PATH):
         super().__init__()
@@ -59,6 +60,9 @@ class Worker(QObject):
         self._latest = 0
         self._client = ollama.Client()
         self._reader = None
+        # live mode: chữ đang hiện trên overlay, và chữ đọc được ở lần trước lúc hình còn đang đổi
+        self._live_shown: tuple[str, ...] | None = None
+        self._live_pending: tuple[str, ...] | None = None
         self._thread = threading.Thread(target=self._run, name="ocr-translate", daemon=True)
 
     # --- gọi từ luồng giao diện ---
@@ -72,6 +76,14 @@ class Worker(QObject):
 
     def submit_text(self, ja: str) -> int:
         return self._submit("text", ja)
+
+    def submit_live(self, image: Image.Image, *, settled: bool) -> int:
+        """Ảnh live mode. settled=False: hình chưa đứng yên, chỉ dịch khi chữ giống lần đọc trước."""
+        return self._submit("live", (image, settled))
+
+    def reset_live(self) -> None:
+        """Vừa bật live mode: lượt live đầu tiên luôn hiện bản dịch, kể cả khi chữ không đổi."""
+        self._jobs.put((0, "live-reset", None))
 
     def reconfigure(self, config: Config) -> None:
         self._jobs.put((0, "config", config))
@@ -100,6 +112,8 @@ class Worker(QObject):
             job_id, kind, payload = item
             if kind == "config":
                 self._apply(payload)
+            elif kind == "live-reset":
+                self._live_shown = self._live_pending = None
             elif job_id == self._latest:  # bỏ qua các lượt cũ khi người dùng đã bấm lượt mới hơn
                 try:
                     self._process(job_id, kind, payload)
@@ -111,15 +125,28 @@ class Worker(QObject):
 
     def _process(self, job_id: int, kind: str, payload) -> None:
         start = time.perf_counter()
-        if kind == "image":
-            if self._reader is None:
-                self.failed.emit(job_id, "Chưa nạp được OCR, xem file log.")
-                return
-            blocks = [b for b in group_lines(self._reader.read_lines(payload)) if has_japanese(b.text)]
-            items = [Item(b.text, box=(b.left, b.top, b.right, b.bottom)) for b in blocks]
-        else:
+        if kind == "text":
             items = [Item(payload.strip())] if has_japanese(payload) else []
+        elif self._reader is None:
+            self.failed.emit(job_id, "Chưa nạp được OCR, xem file log.")
+            return
+        else:
+            image = payload[0] if kind == "live" else payload
+            blocks = [b for b in group_lines(self._reader.read_lines(image)) if has_japanese(b.text)]
+            items = [Item(b.text, box=(b.left, b.top, b.right, b.bottom)) for b in blocks]
         ocr_s = time.perf_counter() - start
+        key = tuple(item.ja for item in items)
+        if kind == "live":
+            settled = payload[1]
+            if key == self._live_shown or (not settled and key != self._live_pending):
+                # chữ không đổi, hoặc hình còn đang đổi mà chữ khác lần đọc trước (câu đang chạy dở): chờ tiếp
+                self._live_pending = key
+                self.idle.emit(job_id)
+                return
+            if not items:  # khung thoại trống / đã chuyển cảnh: bỏ bản dịch cũ đi
+                self._live_shown = key
+                self.result.emit(job_id, [], True)
+                return
         if not items:
             self.failed.emit(job_id, "Không thấy chữ tiếng Nhật trong vùng này.")
             return
@@ -134,6 +161,8 @@ class Worker(QObject):
                 return
             items[i] = replace(items[i], en=known[i] or self._translate(items[i].ja, glossary))
             self.result.emit(job_id, list(items), done == len(items))
+        if kind == "live":  # chỉ ghi nhận khi đã dịch hết: lượt bị ngắt giữa chừng thì lượt live sau dịch tiếp
+            self._live_shown = key
         log.info(
             "Lượt %d: %d khối, OCR %.2fs, dịch %.2fs | %s",
             job_id,

@@ -3,6 +3,7 @@
 import logging
 import os
 import sys
+import time
 
 import ollama
 from PIL import Image
@@ -10,7 +11,7 @@ from PySide6.QtCore import QObject, QRect, Qt, QTimer
 from PySide6.QtGui import QColor, QCursor, QFont, QGuiApplication, QIcon, QPainter, QPixmap, QScreen
 from PySide6.QtWidgets import QApplication, QDialog, QMenu, QSystemTrayIcon
 
-from . import capture, win32
+from . import capture, live, win32
 from . import config as config_store
 from .config import GLOSSARY_PATH, HOTKEY_LABELS
 from .glossary import ensure_file
@@ -23,15 +24,16 @@ from .worker import Item, Worker
 log = logging.getLogger(__name__)
 APP_NAME = "ScreenTranslator"
 MIN_WINDOW = 100  # pixel; cửa sổ đang mở nhỏ hơn thế trên màn hình này thì dịch cả màn hình
+ICON_COLOR, LIVE_ICON_COLOR = QColor(59, 130, 246), QColor(22, 163, 74)  # xanh dương; xanh lá khi live mode bật
 
 
-def make_icon() -> QIcon:
+def make_icon(color: QColor = ICON_COLOR) -> QIcon:
     pixmap = QPixmap(64, 64)
     pixmap.fill(Qt.GlobalColor.transparent)
     painter = QPainter(pixmap)
     painter.setRenderHint(QPainter.RenderHint.Antialiasing)
     painter.setPen(Qt.PenStyle.NoPen)
-    painter.setBrush(QColor(59, 130, 246))
+    painter.setBrush(color)
     painter.drawRoundedRect(0, 0, 64, 64, 14, 14)
     font = QFont("Yu Gothic UI")
     font.setPixelSize(42)
@@ -57,11 +59,17 @@ class TrayApp(QObject):
         self.job = 0
         self.last_ja = self.last_en = ""
         self._previous_foreground = 0
+        self.live_timer = QTimer(self)
+        self.live_timer.setInterval(live.POLL_MS)
+        self.live_timer.timeout.connect(self._live_tick)
+        self.watcher = live.ChangeWatcher()
+        self._live_job: int | None = None  # lượt live đang chờ luồng phụ; chưa xong thì không gửi thêm
 
         self._handlers = {
             "select": self.start_selection,
             "screen": self.translate_window,
             "repeat": self.repeat,
+            "live": self.toggle_live,
             "toggle": self.toggle_overlay,
             "edit": self.open_editor,
         }
@@ -70,6 +78,7 @@ class TrayApp(QObject):
         for action, menu_action in self._menu_actions.items():
             # chờ menu đóng hẳn rồi mới chụp màn hình, không thì ảnh chụp dính cả menu
             menu_action.triggered.connect(lambda *_, handler=self._handlers[action]: QTimer.singleShot(200, handler))
+        self._menu_actions["live"].setCheckable(True)
         self.menu.addSeparator()
         self.menu.addAction("Tên riêng, thuật ngữ…").triggered.connect(self.open_glossary)
         self.menu.addAction("Cài đặt…").triggered.connect(self.open_settings)
@@ -82,6 +91,7 @@ class TrayApp(QObject):
         self.worker.result.connect(self.on_result)
         self.worker.failed.connect(self.on_failed)
         self.worker.status.connect(self.on_status)
+        self.worker.idle.connect(self.on_idle)
         self.worker.start()
         self.hotkeys.triggered.connect(lambda action: self._handlers[action]())
         self.edit_dialog.retranslate.connect(self.retranslate)
@@ -169,6 +179,8 @@ class TrayApp(QObject):
         return capture.grab_region(area)
 
     def _submit_image(self, area: capture.Region, image: Image.Image, *, selection: bool) -> None:
+        if area != self.area:  # live mode theo dõi vùng mới
+            self.watcher = live.ChangeWatcher()
         self.area, self.area_is_selection = area, selection
         self.job = self.worker.submit_image(image)
         # vùng chọn: câu cũ mờ đi trong lúc chờ câu mới
@@ -207,15 +219,24 @@ class TrayApp(QObject):
         if job != self.job:
             return
         shown = self._overlay_items(items)
-        if shown:
+        if shown or (finished and not items):  # live mode: khung thoại trống thì ẩn bản dịch cũ
             self.overlay.show_items(shown)
-        if finished:
+        if finished and job == self._live_job:
+            self._live_job = None
+            self.watcher.forget()
+        if finished and items:
             self.last_ja = "\n".join(item.ja for item in items)
             self.last_en = "\n".join(item.en for item in items)
             if self.edit_dialog.isVisible():
                 self.edit_dialog.set_result(self.last_ja, self.last_en)
 
+    def on_idle(self, job: int) -> None:
+        if job == self._live_job:
+            self._live_job = None
+
     def on_failed(self, job: int, message: str) -> None:
+        if job == self._live_job:
+            self._live_job = None
         if job != self.job:
             return
         self._show_status(message)
@@ -227,6 +248,53 @@ class TrayApp(QObject):
         self.tray.setToolTip(f"{APP_NAME} — {message}")
         if is_error:
             self.notify(message, warning=True)
+
+    # --- live mode ---
+
+    def toggle_live(self) -> None:
+        if self.live_timer.isActive():
+            self._set_live(False)
+            self.notify("Đã tắt live mode.")
+            return
+        if self.area is None:
+            self._set_live(False)
+            self.notify(
+                f"Chọn vùng hộp thoại trước ({self.config.hotkey_select}), "
+                f"rồi bấm {self.config.hotkey_live} để bật live mode."
+            )
+            return
+        if not self.overlay.excluded_from_capture:
+            # app sẽ tự đọc lại bản dịch của chính nó trên màn hình
+            self._set_live(False)
+            self.notify(
+                "Windows này không cho giấu bản dịch khỏi ảnh chụp, nên không bật được live mode.", warning=True
+            )
+            return
+        self.watcher = live.ChangeWatcher()
+        self.worker.reset_live()
+        self._set_live(True)
+        self.notify("Đã bật live mode: câu mới trong vùng đã chọn sẽ tự được dịch.")
+
+    def _set_live(self, on: bool) -> None:
+        if on:
+            self.live_timer.start()
+        else:
+            self.live_timer.stop()
+        self._live_job = None
+        self._menu_actions["live"].setChecked(on)
+        self.tray.setIcon(make_icon(LIVE_ICON_COLOR if on else ICON_COLOR))
+
+    def _live_busy(self) -> bool:
+        # lượt live bị lượt bấm tay mới hơn thay thế thì luồng phụ bỏ qua nó: không còn coi là bận
+        return self._live_job is not None and self._live_job == self.job
+
+    def _live_tick(self) -> None:
+        if self.area is None or self._live_busy():
+            return
+        image = capture.grab_region(self.area)
+        event = self.watcher.update(live.thumbnail(image), time.monotonic())
+        if event:
+            self.job = self._live_job = self.worker.submit_live(image, settled=event == "settled")
 
     # --- các hành động khác ---
 
@@ -263,6 +331,7 @@ class TrayApp(QObject):
             self._register_hotkeys()
 
     def quit(self) -> None:
+        self.live_timer.stop()
         self.hotkeys.clear()
         self.overlay.hide()
         self.tray.hide()
@@ -277,6 +346,7 @@ def run() -> int:
     tray_app = TrayApp()
     hotkeys = tray_app.config.hotkeys
     tray_app.notify(
-        f"Đang chạy nền. {hotkeys['select']}: chọn vùng để dịch · {hotkeys['screen']}: dịch cả cửa sổ game."
+        f"Đang chạy nền. {hotkeys['select']}: chọn vùng để dịch · {hotkeys['screen']}: dịch cả cửa sổ game"
+        f" · {hotkeys['live']}: live mode."
     )
     return app.exec()
