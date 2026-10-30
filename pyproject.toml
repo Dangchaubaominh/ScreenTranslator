@@ -35,6 +35,10 @@ explicit = true
 [project.scripts]
 screen-translator = "screen_translator:main"
 
+# Cùng app nhưng không mở cửa sổ console: shortcut ở menu Start / Desktop / Startup trỏ vào đây
+[project.gui-scripts]
+screen-translator-gui = "screen_translator:main"
+
 [tool.ruff]
 line-length = 120
 

@@ -2,6 +2,7 @@
 
 import json
 import os
+import re
 from dataclasses import asdict, dataclass, fields, replace
 from pathlib import Path
 
@@ -41,6 +42,15 @@ HOTKEY_LABELS = {
     "edit": "Sửa chữ OCR gần nhất",
 }
 
+# Chỗ hiện bản dịch của vùng đã chọn; dịch cả cửa sổ game thì luôn đè lên từng khối chữ
+OVERLAY_POSITIONS = {
+    "cover": "Đè lên chữ gốc",
+    "above": "Ngay trên vùng đã chọn (chữ gốc vẫn thấy)",
+    "below": "Ngay dưới vùng đã chọn (chữ gốc vẫn thấy)",
+}
+FONT_PX_RANGE = (14, 48)
+OPACITY_RANGE = (20, 100)
+
 
 @dataclass(frozen=True)
 class Config:
@@ -53,6 +63,11 @@ class Config:
     hotkey_live: str = "Ctrl+Alt+L"
     hotkey_toggle: str = "Ctrl+Alt+H"
     hotkey_edit: str = "Ctrl+Alt+E"
+    overlay_position: str = "cover"
+    overlay_font_px: int = 34  # cỡ chữ lớn nhất của bản dịch; khung nhỏ thì chữ tự thu nhỏ cho vừa
+    overlay_opacity: int = 100  # % độ đặc của nền; thấp hơn thì chữ Nhật gốc lộ ra sau bản dịch
+    overlay_color: str = "#0c101c"
+    welcomed: bool = False  # đã xem màn hình chào lần đầu
 
     @property
     def hotkeys(self) -> dict[str, str]:
@@ -83,7 +98,21 @@ def load(path: Path = CONFIG_PATH) -> Config:
         config = replace(config, profile=Config.profile)
     if config.ocr_engine not in OCR_ENGINES:
         config = replace(config, ocr_engine=Config.ocr_engine)
-    return config
+    if config.overlay_position not in OVERLAY_POSITIONS:
+        config = replace(config, overlay_position=Config.overlay_position)
+    if not re.fullmatch(r"#[0-9a-fA-F]{6}", str(config.overlay_color)):
+        config = replace(config, overlay_color=Config.overlay_color)
+    return replace(
+        config,
+        overlay_font_px=_clamp(config.overlay_font_px, FONT_PX_RANGE, Config.overlay_font_px),
+        overlay_opacity=_clamp(config.overlay_opacity, OPACITY_RANGE, Config.overlay_opacity),
+    )
+
+
+def _clamp(value, bounds: tuple[int, int], default: int) -> int:
+    if not isinstance(value, int):
+        return default
+    return min(max(value, bounds[0]), bounds[1])
 
 
 def save(config: Config, path: Path = CONFIG_PATH) -> None:

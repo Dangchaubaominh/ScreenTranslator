@@ -27,6 +27,15 @@ def test_unknown_keys_and_bad_values_are_ignored(tmp_path):
     assert load(path) == Config(model="x", profile="light", ocr_engine="oneocr")
 
 
+def test_overlay_settings_are_kept_in_range(tmp_path):
+    path = tmp_path / "config.json"
+    data = {"overlay_position": "left", "overlay_font_px": 200, "overlay_opacity": 5, "overlay_color": "red"}
+    path.write_text(json.dumps(data), encoding="utf-8")
+    assert load(path) == Config(overlay_font_px=48, overlay_opacity=20)
+    path.write_text(json.dumps({"overlay_position": "above", "overlay_font_px": "big"}), encoding="utf-8")
+    assert load(path) == Config(overlay_position="above")
+
+
 def test_profiles():
     light, heavy = Config(profile="light"), Config(profile="heavy")
     assert (light.ocr_device, light.ollama_options) == ("gpu", {})

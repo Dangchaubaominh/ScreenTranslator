@@ -1,3 +1,4 @@
+from conftest import wait_until
 from PIL import Image
 from PySide6.QtCore import QObject, QPoint, QRect, Qt, Signal
 from PySide6.QtTest import QTest
@@ -6,9 +7,9 @@ from PySide6.QtWidgets import QDialog, QDialogButtonBox, QLineEdit
 from screen_translator import app as app_module
 from screen_translator.config import Config
 from screen_translator.ui.dialogs import SettingsDialog
-from screen_translator.ui.overlay import MAX_PX, MIN_PX, Overlay, fit_text
+from screen_translator.ui.overlay import GAP, MAX_PX, MIN_PX, Appearance, Overlay, fit_beside, fit_text
 from screen_translator.ui.region_selector import RegionSelector
-from screen_translator.worker import Item
+from screen_translator.worker import READY, Item
 
 LONG_TEXT = "This is a rather long translated sentence that has to wrap over several lines. " * 4
 
@@ -58,6 +59,34 @@ def test_overlay_covers_all_blocks_and_hides_when_empty(qapp):
     overlay.grab()  # vẽ thử được
     overlay.show_items([])
     assert not overlay.isVisible() and not overlay.has_text()
+
+
+def test_appearance_follows_the_settings(qapp):
+    appearance = Appearance.from_config(Config(overlay_font_px=20, overlay_opacity=50, overlay_color="#ffffff"))
+    assert appearance.max_px == 20 and round(appearance.background.alphaF(), 2) == 0.5
+    assert appearance.text_color().lightnessF() < 0.2  # nền trắng thì chữ tối
+    assert Appearance().text_color().lightnessF() > 0.8
+    assert fit_text(QRect(0, 0, 600, 120), "Hello.", appearance.max_px).font.pixelSize() == 20
+
+
+def test_translation_beside_the_region_flips_when_there_is_no_room(qapp):
+    screen = QRect(0, 0, 1920, 1080)
+    dialogue = QRect(100, 700, 1200, 200)
+    below = fit_beside(dialogue, "Good morning.", "below", 30, screen).rect
+    above = fit_beside(dialogue, "Good morning.", "above", 30, screen).rect
+    assert (below.x(), below.width(), below.top()) == (100, 1200, dialogue.bottom() + 1 + GAP)
+    assert (above.x(), above.width(), above.bottom()) == (100, 1200, dialogue.top() - GAP - 1)
+    # khung thoại sát đáy màn hình: không còn chỗ bên dưới thì đặt lên trên
+    low = QRect(100, 880, 1200, 200)
+    assert fit_beside(low, "Good morning.", "below", 30, screen).rect.bottom() == low.top() - GAP - 1
+    assert fit_beside(QRect(0, 0, 500, 80), "Hi.", "above", 30, screen).rect.top() == 80 + GAP
+
+
+def test_overlay_can_show_text_below_the_region(qapp):
+    overlay = Overlay(Appearance(max_px=20))
+    overlay.show_text(QRect(50, 300, 500, 100), "Hello.", position="below")
+    assert (overlay.geometry().x(), overlay.geometry().y(), overlay.geometry().width()) == (50, 400 + GAP, 500)
+    overlay.hide()
 
 
 def make_selector(qapp):
@@ -129,6 +158,20 @@ def test_settings_saves_valid_hotkeys(qapp):
     assert dialog.result_config() == Config(hotkey_select="Ctrl+Shift+Q")
 
 
+def test_settings_display_tab(qapp):
+    dialog = SettingsDialog(Config(), [], {"start_menu": True, "desktop": False, "autostart": False})
+    dialog._position.setCurrentIndex(dialog._position.findData("below"))
+    dialog._font_px.setValue(22)
+    dialog._opacity.setValue(60)
+    assert dialog._preview.position == "below" and dialog._preview.appearance.max_px == 22
+    dialog._preview.grab()  # vẽ thử được
+    config = dialog.result_config()
+    assert (config.overlay_position, config.overlay_font_px, config.overlay_opacity) == ("below", 22, 60)
+    assert dialog.startup.wanted() == {"start_menu": True, "desktop": False, "autostart": False}
+    # chưa có screen-translator-gui.exe: không chọn được shortcut
+    assert SettingsDialog(Config(), []).startup.wanted() is None
+
+
 class FakeWorker(QObject):
     result = Signal(int, object, bool)
     failed = Signal(int, str)
@@ -155,9 +198,10 @@ class FakeWorker(QObject):
         self.live_resets += 1
 
 
-def make_tray_app(monkeypatch):
+def make_tray_app(monkeypatch, config: Config | None = None):
     monkeypatch.setattr(app_module, "Worker", FakeWorker)
-    monkeypatch.setattr(app_module.config_store, "load", lambda: Config())
+    monkeypatch.setattr(app_module.config_store, "load", lambda: config or Config())
+    monkeypatch.setattr(app_module.config_store, "save", lambda config: None)  # không ghi đè cài đặt thật
     tray_app = app_module.TrayApp()
     messages = []
     monkeypatch.setattr(tray_app, "notify", lambda message, **_: messages.append(message))
@@ -269,4 +313,97 @@ def test_window_translation_puts_each_block_over_its_own_text(qapp, monkeypatch)
     tray_app.worker.result.emit(1, items, False)
     assert tray_app.overlay.isVisible() and tray_app.overlay.geometry().topLeft() == QPoint(314, 809)
     tray_app.overlay.hide()
+    tray_app.hotkeys.clear()
+
+
+def selected_region(tray_app):
+    monitor = app_module.capture.Monitor(0, 0, 1920, 1080)
+    area = app_module.capture.Region.from_physical(monitor, (0, 0), 1.0, 100, 300, 700, 400)
+    tray_app._submit_image(area, Image.new("RGB", (600, 100)), selection=True)
+    return area
+
+
+def test_translation_above_the_region_joins_all_blocks(qapp, monkeypatch):
+    tray_app, _ = make_tray_app(monkeypatch, Config(overlay_position="above"))
+    selected_region(tray_app)
+    items = [Item("猫だ。", "A cat.", (0, 0, 200, 40)), Item("犬だ。", "A dog.", (0, 50, 200, 90)), Item("鳥", None)]
+    assert tray_app._overlay_items(items) == [(QRect(100, 300, 600, 100), "A cat.\nA dog.")]
+    tray_app.worker.result.emit(1, items, False)
+    assert tray_app.overlay.geometry().bottom() == 300 - GAP - 1  # ngay trên vùng, không che chữ gốc
+    tray_app.overlay.hide()
+    tray_app.hotkeys.clear()
+
+
+def test_tray_icon_and_waiting_text_show_loading(qapp, monkeypatch):
+    tray_app, messages = make_tray_app(monkeypatch)
+    assert tray_app.loading and "Đang khởi động" in tray_app.tray.toolTip()
+    tray_app.on_status("Đang nạp model dịch…", False)
+    selected_region(tray_app)
+    assert tray_app.overlay._items[0][1] == "Đang nạp model dịch…"  # nói rõ đang chờ gì, không chỉ "Đang dịch…"
+
+    tray_app.on_status(READY, False)
+    assert not tray_app.loading and tray_app.tray.toolTip().endswith(READY)
+    tray_app.overlay.excluded_from_capture = True
+    tray_app.toggle_live()
+    assert "live mode đang bật" in tray_app.tray.toolTip()
+    tray_app.toggle_live()
+
+    tray_app.on_status("Không kết nối được Ollama.", True)
+    assert not tray_app.loading and messages[-1] == "Không kết nối được Ollama."
+    tray_app.overlay.hide()
+    tray_app.hotkeys.clear()
+
+
+def test_info_is_a_short_hint_and_errors_are_windows_popups(qapp, monkeypatch):
+    monkeypatch.setattr(app_module, "Worker", FakeWorker)
+    monkeypatch.setattr(app_module.config_store, "load", lambda: Config())
+    tray_app = app_module.TrayApp()
+    popups = []
+    monkeypatch.setattr(tray_app.tray, "showMessage", lambda *args: popups.append(args[1]))
+    tray_app.notify("Đã bật live mode.")
+    assert popups == [] and tray_app.hint.isVisible() and tray_app.hint_timer.isActive()
+    tray_app.notify("Không kết nối được Ollama.", warning=True)
+    assert popups == ["Không kết nối được Ollama."]
+
+    selected_region(tray_app)
+    tray_app.notify("Đã tắt live mode.")
+    assert tray_app.hint.geometry().bottom() == 300 - GAP - 1  # ngay trên vùng đang dịch
+    tray_app.hint.hide()
+    tray_app.overlay.hide()
+    tray_app.hotkeys.clear()
+
+
+def test_first_run_guide_offers_shortcuts_and_is_shown_once(qapp, monkeypatch, tmp_path):
+    tray_app, _ = make_tray_app(monkeypatch)
+    saved, applied = [], []
+    monkeypatch.setattr(app_module.config_store, "save", saved.append)
+    launcher = tmp_path / "screen-translator-gui.exe"
+    launcher.write_bytes(b"")
+    monkeypatch.setattr(app_module.shortcuts, "launcher", lambda: launcher)
+    monkeypatch.setattr(app_module.shortcuts, "states", lambda: dict.fromkeys(app_module.shortcuts.LABELS, False))
+    monkeypatch.setattr(app_module.shortcuts, "ICON_PATH", tmp_path / "icon.ico")
+    monkeypatch.setattr(app_module.shortcuts, "apply", applied.append)
+
+    tray_app.show_guide(first_run=True)
+    assert tray_app.guide.isVisible()
+    tray_app.guide.accept()
+    assert applied == [{"start_menu": True, "desktop": True, "autostart": False}]
+    assert (tmp_path / "icon.ico").exists()
+    assert saved[-1].welcomed and tray_app.config.welcomed and tray_app.guide is None
+
+    tray_app.show_guide()  # mở lại từ menu: chỉ có hướng dẫn
+    assert tray_app.guide.startup is None
+    tray_app.guide.accept()
+    assert len(applied) == len(saved) == 1
+    tray_app.hotkeys.clear()
+
+
+def test_opening_the_app_again_shows_the_guide_of_the_running_one(qapp, monkeypatch):
+    tray_app, _ = make_tray_app(monkeypatch, Config(welcomed=True))
+    monkeypatch.setattr(app_module, "INSTANCE_KEY", f"ScreenTranslator-test-{id(tray_app)}")
+    assert not app_module._wake_running_instance()
+    app_module._listen_for_wake(tray_app)
+    assert app_module._wake_running_instance()
+    wait_until(qapp, lambda: tray_app.guide is not None)
+    tray_app.guide.accept()
     tray_app.hotkeys.clear()

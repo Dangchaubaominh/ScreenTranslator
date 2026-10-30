@@ -21,6 +21,7 @@ from .translate import tidy, translate, unload
 log = logging.getLogger(__name__)
 CACHE_PATH = APP_DIR / "translations.sqlite3"
 UNTRANSLATED = "(không dịch được)"
+READY = "Sẵn sàng"  # trạng thái khi đã nạp xong OCR và model dịch
 
 
 @dataclass(frozen=True)
@@ -235,20 +236,24 @@ class Worker(QObject):
             log.exception("Làm nóng model lỗi")
             self.status.emit(describe_error(e, self._config.model), True)
             return
-        self.status.emit("Sẵn sàng", False)
+        self.status.emit(READY, False)
 
     def _apply(self, config: Config) -> None:
         old, self._config = self._config, config
-        if (config.ocr_engine, config.ocr_device) != (old.ocr_engine, old.ocr_device):
+        new_reader = (config.ocr_engine, config.ocr_device) != (old.ocr_engine, old.ocr_device)
+        if new_reader:
             self._reader = None
             try:
                 self._load_reader()
             except Exception as e:
                 log.exception("Nạp OCR lỗi")
                 self.status.emit(f"Nạp OCR lỗi: {e}", True)
+                new_reader = False  # không báo "Sẵn sàng" đè lên lỗi
         if (config.model, config.ollama_options) != (old.model, old.ollama_options):
             self._unload(old.model)
             self._warm_up()
+        elif new_reader:
+            self.status.emit(READY, False)
 
     def _unload(self, model: str | None = None) -> None:
         try:

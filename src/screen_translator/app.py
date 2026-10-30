@@ -1,42 +1,47 @@
 """Ứng dụng chạy nền ở khay hệ thống: phím tắt → chọn vùng → OCR + dịch → overlay đè lên chữ gốc."""
 
+import getpass
 import logging
 import os
 import sys
 import time
+from dataclasses import replace
 
 import ollama
 from PIL import Image
-from PySide6.QtCore import QObject, QRect, Qt, QTimer
+from PySide6.QtCore import QObject, QPoint, QRect, Qt, QTimer
 from PySide6.QtGui import QColor, QCursor, QFont, QGuiApplication, QIcon, QPainter, QPixmap, QScreen
+from PySide6.QtNetwork import QLocalServer, QLocalSocket
 from PySide6.QtWidgets import QApplication, QDialog, QMenu, QSystemTrayIcon
 
-from . import capture, live, win32
+from . import capture, live, shortcuts, win32
 from . import config as config_store
 from .config import GLOSSARY_PATH, HOTKEY_LABELS
 from .glossary import ensure_file
 from .hotkeys import HotkeyWindow
-from .ui.dialogs import EditDialog, SettingsDialog
-from .ui.overlay import Overlay
+from .ui.dialogs import EditDialog, GuideDialog, SettingsDialog, StartupOptions
+from .ui.overlay import GAP, HINT_PX, Appearance, Overlay, clamp, hint_size
 from .ui.region_selector import RegionSelector
-from .worker import Item, Worker
+from .worker import READY, Item, Worker
 
 log = logging.getLogger(__name__)
 APP_NAME = "ScreenTranslator"
+INSTANCE_KEY = f"{APP_NAME}-{getpass.getuser()}"  # kênh để bản mở sau báo cho bản đang chạy
 MIN_WINDOW = 100  # pixel; cửa sổ đang mở nhỏ hơn thế trên màn hình này thì dịch cả màn hình
 ICON_COLOR, LIVE_ICON_COLOR = QColor(59, 130, 246), QColor(22, 163, 74)  # xanh dương; xanh lá khi live mode bật
+LOADING_ICON_COLOR = QColor(128, 136, 150)  # xám: đang nạp OCR / model dịch
 
 
-def make_icon(color: QColor = ICON_COLOR) -> QIcon:
-    pixmap = QPixmap(64, 64)
+def make_icon(color: QColor = ICON_COLOR, size: int = 64) -> QIcon:
+    pixmap = QPixmap(size, size)
     pixmap.fill(Qt.GlobalColor.transparent)
     painter = QPainter(pixmap)
     painter.setRenderHint(QPainter.RenderHint.Antialiasing)
     painter.setPen(Qt.PenStyle.NoPen)
     painter.setBrush(color)
-    painter.drawRoundedRect(0, 0, 64, 64, 14, 14)
+    painter.drawRoundedRect(0, 0, size, size, size * 0.22, size * 0.22)
     font = QFont("Yu Gothic UI")
-    font.setPixelSize(42)
+    font.setPixelSize(round(size * 0.66))
     font.setBold(True)
     painter.setFont(font)
     painter.setPen(QColor(255, 255, 255))
@@ -50,14 +55,20 @@ class TrayApp(QObject):
         super().__init__()
         self.config = config_store.load()
         self.worker = Worker(self.config)
-        self.overlay = Overlay()
+        self.overlay = Overlay(Appearance.from_config(self.config))
+        self.hint = Overlay(Appearance(max_px=HINT_PX))  # thông báo ngắn tự tắt, thay cho popup của Windows
+        self.hint_timer = QTimer(self, singleShot=True)
+        self.hint_timer.timeout.connect(self.hint.hide)
         self.edit_dialog = EditDialog()
+        self.guide: GuideDialog | None = None
         self.hotkeys = HotkeyWindow()
         self.selector: RegionSelector | None = None
         self.area: capture.Region | None = None  # vùng chụp gần nhất: vùng đã chọn, hoặc cả cửa sổ game
         self.area_is_selection = True
         self.job = 0
         self.last_ja = self.last_en = ""
+        self.shown_items: list[Item] = []  # bản dịch đang hiện, để vẽ lại khi đổi cài đặt hiển thị
+        self.status_text, self.loading = "Đang khởi động…", True
         self._previous_foreground = 0
         self.live_timer = QTimer(self)
         self.live_timer.setInterval(live.POLL_MS)
@@ -82,9 +93,10 @@ class TrayApp(QObject):
         self.menu.addSeparator()
         self.menu.addAction("Tên riêng, thuật ngữ…").triggered.connect(self.open_glossary)
         self.menu.addAction("Cài đặt…").triggered.connect(self.open_settings)
+        self.menu.addAction("Hướng dẫn…").triggered.connect(self.show_guide)
         self.menu.addAction("Thoát").triggered.connect(self.quit)
-        self.tray = QSystemTrayIcon(make_icon())
-        self.tray.setToolTip(APP_NAME)
+        self.tray = QSystemTrayIcon()
+        self._update_tray()
         self.tray.setContextMenu(self.menu)
         self.tray.activated.connect(self._on_tray_activated)
 
@@ -106,8 +118,30 @@ class TrayApp(QObject):
             self.notify("Không đăng ký được phím tắt:\n" + "\n".join(errors), warning=True)
 
     def notify(self, message: str, *, warning: bool = False) -> None:
-        icon = QSystemTrayIcon.MessageIcon.Warning if warning else QSystemTrayIcon.MessageIcon.Information
-        self.tray.showMessage(APP_NAME, message, icon)
+        """Lỗi: popup của Windows (còn lại trong Notification Center). Thông tin: dòng chữ ngắn tự tắt."""
+        if warning:
+            self.tray.showMessage(APP_NAME, message, QSystemTrayIcon.MessageIcon.Warning)
+        else:
+            self._show_hint(message)
+
+    def _show_hint(self, message: str) -> None:
+        size = hint_size(message)
+        if self.area is not None:  # ngay trên vùng đang dịch, chỗ người dùng đang nhìn
+            x, y, _, _ = self.area.to_logical()
+            rect = QRect(QPoint(x, y - GAP - size.height()), size)
+        else:  # góc phải dưới, cạnh icon ở khay hệ thống
+            corner = QGuiApplication.primaryScreen().availableGeometry().bottomRight()
+            rect = QRect(corner - QPoint(size.width() + 12, size.height() + 12), size)
+        screen = QGuiApplication.screenAt(rect.center()) or QGuiApplication.primaryScreen()
+        self.hint.show_text(clamp(rect, screen.geometry()), message)
+        self.hint_timer.start(min(8000, 2500 + 40 * len(message)))
+
+    def _update_tray(self) -> None:
+        """Màu icon và tooltip theo trạng thái: đang nạp (xám), sẵn sàng (xanh dương), live mode (xanh lá)."""
+        live_on = self.live_timer.isActive()
+        color = LIVE_ICON_COLOR if live_on else LOADING_ICON_COLOR if self.loading else ICON_COLOR
+        self.tray.setIcon(make_icon(color))
+        self.tray.setToolTip(f"{APP_NAME} — {self.status_text}" + (" · live mode đang bật" if live_on else ""))
 
     def _on_tray_activated(self, reason) -> None:
         if reason == QSystemTrayIcon.ActivationReason.Trigger:  # bấm chuột trái vào icon
@@ -183,8 +217,10 @@ class TrayApp(QObject):
             self.watcher = live.ChangeWatcher()
         self.area, self.area_is_selection = area, selection
         self.job = self.worker.submit_image(image)
-        # vùng chọn: câu cũ mờ đi trong lúc chờ câu mới
-        self._show_status((self.last_en or "Đang dịch…") if selection else "Đang đọc chữ…")
+        if self.loading:  # lần đầu phải chờ nạp model: nói rõ đang chờ gì
+            self._show_status(self.status_text)
+        else:  # vùng chọn: câu cũ mờ đi trong lúc chờ câu mới
+            self._show_status((self.last_en or "Đang dịch…") if selection else "Đang đọc chữ…")
 
     def retranslate(self, ja: str) -> None:
         self.job = self.worker.submit_text(ja)
@@ -198,15 +234,20 @@ class TrayApp(QObject):
             return
         x, y, w, h = self.area.to_logical()
         rect = QRect(x, y, w, h) if self.area_is_selection else QRect(x + 16, y + 16, min(w - 32, 420), 48)
-        self.overlay.show_text(rect, text, dim=True)
+        self.overlay.show_text(rect, text, dim=True, position=self._position())
+
+    def _position(self) -> str:
+        """Bản dịch vùng đã chọn đặt theo cài đặt; dịch cả cửa sổ thì luôn đè lên từng khối chữ."""
+        return self.config.overlay_position if self.area_is_selection else "cover"
 
     def _overlay_items(self, items: list[Item]) -> list[tuple[QRect, str]]:
         """Khung (tọa độ logic) và bản dịch của các khối đã dịch xong."""
         if self.area is None:
             return []
-        if self.area_is_selection and len(items) == 1:
-            # một khối chữ (thường là hộp thoại): phủ cả vùng đã chọn cho chữ dịch to, dễ đọc
-            return [(QRect(*self.area.to_logical()), items[0].en)] if items[0].en is not None else []
+        if self.area_is_selection and (len(items) == 1 or self._position() != "cover"):
+            # một khối chữ (thường là hộp thoại), hoặc bản dịch đặt cạnh vùng: một khung theo cả vùng đã chọn
+            done = [item.en for item in items if item.en is not None]
+            return [(QRect(*self.area.to_logical()), "\n".join(done))] if done else []
         return [
             (QRect(*self.area.sub(*item.box).to_logical()), item.en)
             for item in items
@@ -220,7 +261,8 @@ class TrayApp(QObject):
             return
         shown = self._overlay_items(items)
         if shown or (finished and not items):  # live mode: khung thoại trống thì ẩn bản dịch cũ
-            self.overlay.show_items(shown)
+            self.overlay.show_items(shown, position=self._position())
+            self.shown_items = items
         if finished and job == self._live_job:
             self._live_job = None
             self.watcher.forget()
@@ -245,7 +287,8 @@ class TrayApp(QObject):
 
     def on_status(self, message: str, is_error: bool) -> None:
         log.info("Trạng thái: %s", message)
-        self.tray.setToolTip(f"{APP_NAME} — {message}")
+        self.status_text, self.loading = message, not is_error and message != READY
+        self._update_tray()
         if is_error:
             self.notify(message, warning=True)
 
@@ -282,7 +325,7 @@ class TrayApp(QObject):
             self.live_timer.stop()
         self._live_job = None
         self._menu_actions["live"].setChecked(on)
-        self.tray.setIcon(make_icon(LIVE_ICON_COLOR if on else ICON_COLOR))
+        self._update_tray()
 
     def _live_busy(self) -> bool:
         # lượt live bị lượt bấm tay mới hơn thay thế thì luồng phụ bỏ qua nó: không còn coi là bận
@@ -323,30 +366,105 @@ class TrayApp(QObject):
             models = sorted(m.model for m in ollama.Client().list().models)
         except (ConnectionError, ollama.ResponseError):
             models = []  # Ollama chưa chạy: vẫn cho gõ tên model bằng tay
-        dialog = SettingsDialog(self.config, models)
+        startup = self._shortcut_states()
+        dialog = SettingsDialog(self.config, models, startup)
         if dialog.exec() == QDialog.DialogCode.Accepted:
             self.config = dialog.result_config()
             config_store.save(self.config)
             self.worker.reconfigure(self.config)
+            self.overlay.set_appearance(Appearance.from_config(self.config))
+            if self.overlay.isVisible():  # vẽ lại bản dịch đang hiện theo kiểu mới
+                self.overlay.show_items(self._overlay_items(self.shown_items), position=self._position())
             self._register_hotkeys()
+            if (wanted := dialog.startup.wanted()) is not None and wanted != startup:
+                self._apply_shortcuts(wanted)
+
+    # --- hướng dẫn, shortcut ---
+
+    def show_guide(self, *, first_run: bool = False) -> None:
+        """Màn hình chào lần đầu (kèm lựa chọn tạo shortcut); sau đó mở lại từ menu, hoặc khi mở app lần nữa."""
+        if self.guide is None:
+            startup = None
+            if first_run:
+                states = self._shortcut_states()  # lần đầu: gợi ý menu Start + Desktop, tự chạy thì để người dùng chọn
+                startup = StartupOptions(
+                    states and {key: on or key != "autostart" for key, on in states.items()},
+                )
+            self.guide = GuideDialog(self.config.hotkeys, startup)
+            self.guide.finished.connect(self._on_guide_closed)
+        self.guide.show()
+        self.guide.raise_()
+        self.guide.activateWindow()
+
+    def _on_guide_closed(self, result: int) -> None:
+        guide, self.guide = self.guide, None
+        guide.deleteLater()
+        if guide.startup is None:
+            return
+        if result == QDialog.DialogCode.Accepted and (wanted := guide.startup.wanted()) is not None:
+            self._apply_shortcuts(wanted)
+        self.config = replace(self.config, welcomed=True)
+        config_store.save(self.config)
+
+    @staticmethod
+    def _shortcut_states() -> dict[str, bool] | None:
+        return shortcuts.states() if shortcuts.launcher().exists() else None
+
+    def _apply_shortcuts(self, wanted: dict[str, bool]) -> None:
+        try:
+            shortcuts.ICON_PATH.parent.mkdir(parents=True, exist_ok=True)
+            make_icon(size=256).pixmap(256).save(str(shortcuts.ICON_PATH))
+            shortcuts.apply(wanted)
+        except OSError as e:
+            log.exception("Không tạo được shortcut")
+            self.notify(f"Không tạo được shortcut: {e}", warning=True)
 
     def quit(self) -> None:
         self.live_timer.stop()
         self.hotkeys.clear()
         self.overlay.hide()
+        self.hint.hide()
         self.tray.hide()
         self.worker.stop()  # gỡ model dịch khỏi VRAM
         QApplication.quit()
 
 
-def run() -> int:
+def _wake_running_instance() -> bool:
+    """Đã có một bản đang chạy (vd. bấm shortcut lần nữa) thì báo nó mở hướng dẫn, trả về True."""
+    socket = QLocalSocket()
+    socket.connectToServer(INSTANCE_KEY)
+    if not socket.waitForConnected(500):
+        return False
+    socket.disconnectFromServer()
+    return True
+
+
+def _listen_for_wake(tray_app: TrayApp) -> None:
+    server = QLocalServer(tray_app)
+
+    def on_connection() -> None:
+        server.nextPendingConnection().deleteLater()
+        tray_app.show_guide()
+
+    server.newConnection.connect(on_connection)
+    if not server.listen(INSTANCE_KEY):
+        log.warning("Không mở được kênh %s: %s", INSTANCE_KEY, server.errorString())
+
+
+def run(*, autostart: bool = False) -> int:
     app = QApplication(sys.argv)
     app.setQuitOnLastWindowClosed(False)
     app.setApplicationName(APP_NAME)
+    if _wake_running_instance():  # chỉ một bản chạy: hai bản sẽ tranh nhau phím tắt
+        return 0
     tray_app = TrayApp()
+    _listen_for_wake(tray_app)
     hotkeys = tray_app.config.hotkeys
-    tray_app.notify(
-        f"Đang chạy nền. {hotkeys['select']}: chọn vùng để dịch · {hotkeys['screen']}: dịch cả cửa sổ game"
-        f" · {hotkeys['live']}: live mode."
-    )
+    if not tray_app.config.welcomed:
+        tray_app.show_guide(first_run=True)
+    elif not autostart:
+        tray_app.notify(
+            f"ScreenTranslator đang chạy nền (icon 訳 ở khay hệ thống).\n{hotkeys['select']}: chọn vùng · "
+            f"{hotkeys['live']}: live mode · {hotkeys['screen']}: dịch cả cửa sổ game"
+        )
     return app.exec()

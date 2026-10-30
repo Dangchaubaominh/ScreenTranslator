@@ -10,6 +10,7 @@ from pathlib import Path
 def main() -> None:
     parser = argparse.ArgumentParser(prog="screen-translator", description=__doc__)
     parser.add_argument("--image", type=Path, help="đọc và dịch một file ảnh rồi thoát, không mở giao diện")
+    parser.add_argument("--autostart", action="store_true", help="chạy lúc mở Windows: không hiện thông báo khởi động")
     args = parser.parse_args()
 
     from .config import APP_DIR
@@ -26,7 +27,7 @@ def main() -> None:
     else:
         from .app import run
 
-        sys.exit(run())
+        sys.exit(run(autostart=args.autostart))
 
 
 def translate_file(path: Path) -> None:
