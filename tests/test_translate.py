@@ -1,0 +1,112 @@
+from types import SimpleNamespace
+
+import pytest
+
+from screen_translator.translate import (
+    SYSTEM_PROMPT,
+    keep_lines,
+    max_tokens,
+    style_of,
+    tidy,
+    translate,
+    vntl_prompt,
+)
+
+
+class FakeClient:
+    def __init__(self):
+        self.calls = []
+
+    def generate(self, **kwargs):
+        self.calls.append(("generate", kwargs))
+        return SimpleNamespace(response="  Hello.\n")
+
+    def chat(self, **kwargs):
+        self.calls.append(("chat", kwargs))
+        return SimpleNamespace(message=SimpleNamespace(content=" Hi. "))
+
+
+@pytest.mark.parametrize(
+    ("tag", "style"),
+    [
+        ("hf.co/lmg-anon/vntl-gemma2-2b-gguf:Q6_K", "vntl"),
+        ("hf.co/lmg-anon/vntl-llama3-8b-v2-gguf:Q4_K_M", "vntl"),
+        ("translategemma:4b", "translategemma"),
+        ("hf.co/LiquidAI/LFM2-350M-ENJP-MT-GGUF:Q4_K_M", "lfm2"),
+        ("qwen3.5:4b", "chat"),
+        ("qwen2.5:3b", "chat"),
+    ],
+)
+def test_style_of(tag, style):
+    assert style_of(tag) == style
+
+
+def test_vntl_uses_raw_prompt_with_stop_words():
+    client = FakeClient()
+    text, _ = translate(client, "vntl-gemma2-2b", "猫だ", options={"num_gpu": 0}, keep_alive="5m")
+    assert text == "Hello."
+    kind, call = client.calls[0]
+    assert kind == "generate"
+    assert call["raw"] is True
+    assert call["prompt"] == vntl_prompt("猫だ") == "<<METADATA>>\n<<TRANSLATE>>\n<<JAPANESE>>\n猫だ\n<<ENGLISH>>\n"
+    assert call["options"] == {
+        "num_ctx": 2048,
+        "num_predict": max_tokens("猫だ"),
+        "temperature": 0,
+        "num_gpu": 0,
+        "stop": ["<<", "<eos>", "\n"],  # câu một dòng: dừng ở cuối dòng
+    }
+    assert call["keep_alive"] == "5m"
+
+
+def test_multi_line_input_may_answer_on_several_lines():
+    client = FakeClient()
+    translate(client, "vntl-gemma2-2b", "一行目\n二行目")
+    assert client.calls[0][1]["options"]["stop"] == ["<<", "<eos>"]
+
+
+def test_output_length_is_capped_by_input_length():
+    assert max_tokens("設定") < max_tokens("自分が寝ていた部屋に戻ると、枕元に何かが転がっていた。") <= 300
+
+
+def test_invented_extra_lines_are_dropped():
+    # VNTL thật: dịch nhãn menu xong viết thêm một câu tự nghĩ ra
+    en = "New Game Gallery - Achievements\n\n\nYou can now set the achievements for the New Game Gallery."
+    assert keep_lines(en, "ニューゲームギャラリー実績設定") == "New Game Gallery - Achievements"
+    assert keep_lines("Line one\n\nLine two\nLine three", "一\n二") == "Line one\nLine two"
+
+
+def test_user_options_override_model_defaults():
+    client = FakeClient()
+    translate(client, "hf.co/LiquidAI/LFM2-350M-ENJP-MT-GGUF:Q4_K_M", "猫", options={"temperature": 0.1})
+    _, call = client.calls[0]
+    assert call["options"]["temperature"] == 0.1
+    assert call["options"]["min_p"] == 0.1
+    assert call["messages"][0] == {"role": "system", "content": "Translate to English."}
+
+
+def test_translategemma_puts_everything_in_one_user_message():
+    client = FakeClient()
+    translate(client, "translategemma:4b", "猫")
+    _, call = client.calls[0]
+    assert len(call["messages"]) == 1
+    assert call["messages"][0]["content"].endswith("English:\n\n\n猫")
+
+
+def test_qwen3_disables_thinking():
+    client = FakeClient()
+    text, _ = translate(client, "qwen3.5:4b", "猫")
+    assert text == "Hi."
+    _, call = client.calls[0]
+    assert call["think"] is False
+    assert call["messages"][0] == {"role": "system", "content": SYSTEM_PROMPT}
+
+
+def test_other_chat_models_get_no_think_flag():
+    client = FakeClient()
+    translate(client, "qwen2.5:3b", "猫")
+    assert "think" not in client.calls[0][1]
+
+
+def test_tidy_turns_japanese_quotes_into_english_ones():
+    assert tidy(" 「Hello」 and 『hi』 ") == "“Hello” and ‘hi’"
