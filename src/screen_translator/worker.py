@@ -89,6 +89,12 @@ class Worker(QObject):
     def reconfigure(self, config: Config) -> None:
         self._jobs.put((0, "config", config))
 
+    def set_paused(self, paused: bool) -> None:
+        """Tạm dừng: bỏ lượt đang dịch dở và gỡ model dịch khỏi VRAM cho game. Tiếp tục: nạp lại model."""
+        if paused:
+            self._latest += 1  # lượt đang dịch dở dừng ở khối kế tiếp
+        self._jobs.put((0, "pause" if paused else "resume", None))
+
     def stop(self) -> None:
         self._latest += 1  # lượt đang dịch dở dừng ở khối kế tiếp
         self._jobs.put(None)
@@ -115,6 +121,10 @@ class Worker(QObject):
                 self._apply(payload)
             elif kind == "live-reset":
                 self._live_shown = self._live_pending = None
+            elif kind == "pause":
+                self._unload()
+            elif kind == "resume":
+                self._warm_up()
             elif job_id == self._latest:  # bỏ qua các lượt cũ khi người dùng đã bấm lượt mới hơn
                 try:
                     self._process(job_id, kind, payload)

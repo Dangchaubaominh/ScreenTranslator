@@ -2,12 +2,21 @@ from conftest import wait_until
 from PIL import Image
 from PySide6.QtCore import QObject, QPoint, QRect, Qt, Signal
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QDialog, QDialogButtonBox, QLineEdit
+from PySide6.QtWidgets import QDialog, QDialogButtonBox, QLineEdit, QSystemTrayIcon
 
 from screen_translator import app as app_module
 from screen_translator.config import Config
 from screen_translator.ui.dialogs import SettingsDialog
-from screen_translator.ui.overlay import GAP, MAX_PX, MIN_PX, Appearance, Overlay, fit_beside, fit_text
+from screen_translator.ui.overlay import (
+    GAP,
+    MAX_PX,
+    MIN_PX,
+    Appearance,
+    Overlay,
+    fit_beside,
+    fit_blocks,
+    fit_text,
+)
 from screen_translator.ui.region_selector import RegionSelector
 from screen_translator.worker import READY, Item
 
@@ -16,10 +25,10 @@ LONG_TEXT = "This is a rather long translated sentence that has to wrap over sev
 
 def test_short_text_uses_the_biggest_font_and_keeps_the_box(qapp):
     rect = QRect(100, 100, 600, 120)
-    font, box, padding = fit_text(rect, "Hello.")
-    assert font.pixelSize() == MAX_PX
-    assert box == rect
-    assert padding == 10
+    fitted = fit_text(rect, "Hello.")
+    assert fitted.font.pixelSize() == MAX_PX
+    assert fitted.rect == rect
+    assert fitted.padding == fitted.vpadding == 10
 
 
 def test_longer_text_gets_a_smaller_font(qapp):
@@ -31,7 +40,7 @@ def test_longer_text_gets_a_smaller_font(qapp):
 
 def test_text_that_never_fits_grows_the_box_downwards(qapp):
     rect = QRect(50, 60, 300, 40)
-    font, box, _ = fit_text(rect, LONG_TEXT)
+    font, box, *_ = fit_text(rect, LONG_TEXT)
     assert font.pixelSize() == MIN_PX
     assert (box.x(), box.y(), box.width()) == (50, 60, 300)
     assert box.height() > rect.height()
@@ -39,9 +48,45 @@ def test_text_that_never_fits_grows_the_box_downwards(qapp):
 
 def test_tiny_menu_label_grows_sideways_for_a_long_word(qapp):
     rect = QRect(20, 300, 28, 15)  # nhãn "台所" trên bản đồ phòng, tọa độ logic
-    font, box, padding = fit_text(rect, "Kitchen")
+    font, box, padding, _ = fit_text(rect, "Kitchen")
     assert padding == 3 and font.pixelSize() == MIN_PX
     assert box.topLeft() == rect.topLeft() and box.width() > rect.width() and box.height() > rect.height()
+
+
+def overlapping(rects: list[QRect]) -> list[tuple[int, int]]:
+    return [(i, j) for i, a in enumerate(rects) for j, b in enumerate(rects) if i < j and a.intersects(b)]
+
+
+def test_window_blocks_grow_into_free_space_without_overlapping(qapp):
+    # bản đồ phòng: nhãn chữ Nhật ngắn, cao ~18 px, bản dịch tiếng Anh dài hơn nhiều
+    window = QRect(0, 0, 800, 600)
+    kitchen, lounge = QRect(20, 100, 28, 18), QRect(200, 100, 28, 18)
+    restaurant, hall, bath = QRect(20, 200, 60, 18), QRect(180, 200, 60, 18), QRect(20, 260, 60, 18)
+    blocks = [
+        (kitchen, "Kitchen"),
+        (lounge, "Sakuya's room"),
+        (restaurant, "Hayashida's restaurant"),
+        (hall, "Hall"),
+        (bath, "Bath"),
+    ]
+    fitted = fit_blocks(blocks, MAX_PX, window)
+    boxes = [f.rect for f in fitted]
+    assert overlapping(boxes) == []
+    assert all(
+        window.contains(box) and box.topLeft() == rect.topLeft() for box, (rect, _) in zip(boxes, blocks, strict=True)
+    )
+    # còn chỗ bên phải: chỉ nới ngang, vẫn một dòng, chữ cỡ vừa nhãn gốc
+    assert boxes[0].height() == kitchen.height() and boxes[0].right() < lounge.left()
+    assert fitted[0].font.pixelSize() == MIN_PX
+    # bên phải có nhãn khác: xuống dòng trong chỗ trống, không đè nhãn bên phải hay bên dưới
+    assert restaurant.height() < boxes[2].height() and boxes[2].bottom() < bath.top()
+    assert boxes[3] == hall  # vừa sẵn: giữ đúng khung chữ gốc
+
+
+def test_untranslated_block_keeps_its_space(qapp):
+    restaurant, hall = QRect(20, 200, 60, 18), QRect(180, 200, 60, 18)
+    fitted = fit_blocks([(restaurant, "Hayashida's restaurant"), (hall, None)], MAX_PX, QRect(0, 0, 800, 600))
+    assert fitted[1] is None and not fitted[0].rect.intersects(hall)
 
 
 def test_overlay_shows_text_over_the_region(qapp):
@@ -67,6 +112,17 @@ def test_appearance_follows_the_settings(qapp):
     assert appearance.text_color().lightnessF() < 0.2  # nền trắng thì chữ tối
     assert Appearance().text_color().lightnessF() > 0.8
     assert fit_text(QRect(0, 0, 600, 120), "Hello.", appearance.max_px).font.pixelSize() == 20
+
+
+def test_see_through_background_outlines_the_text(qapp):
+    assert Appearance.from_config(Config(overlay_opacity=88)).outline_color() is None  # nền đặc: không cần viền
+    light_text = Appearance.from_config(Config(overlay_opacity=20)).outline_color()
+    dark_text = Appearance.from_config(Config(overlay_opacity=0, overlay_color="#ffffff")).outline_color()
+    assert light_text.lightnessF() < 0.2 and dark_text.lightnessF() > 0.8  # viền ngược màu chữ
+    overlay = Overlay(Appearance.from_config(Config(overlay_opacity=0)))
+    overlay.show_text(QRect(10, 20, 300, 60), "Hello.")
+    overlay.grab()  # vẽ thử được
+    overlay.hide()
 
 
 def test_translation_beside_the_region_flips_when_there_is_no_room(qapp):
@@ -162,7 +218,7 @@ def test_settings_display_tab(qapp):
     dialog = SettingsDialog(Config(), [], {"start_menu": True, "desktop": False, "autostart": False})
     dialog._position.setCurrentIndex(dialog._position.findData("below"))
     dialog._font_px.setValue(22)
-    dialog._opacity.setValue(60)
+    dialog._transparency.setValue(40)
     assert dialog._preview.position == "below" and dialog._preview.appearance.max_px == 22
     dialog._preview.grab()  # vẽ thử được
     config = dialog.result_config()
@@ -182,9 +238,13 @@ class FakeWorker(QObject):
         super().__init__()
         self.jobs = []
         self.live_resets = 0
+        self.paused = []
 
     def start(self):
         pass
+
+    def set_paused(self, paused):
+        self.paused.append(paused)
 
     def submit_image(self, image):
         self.jobs.append(image)
@@ -307,9 +367,12 @@ def test_window_translation_puts_each_block_over_its_own_text(qapp, monkeypatch)
     tray_app._submit_image(area, Image.new("RGB", (1920, 1020)), selection=False)
     items = [
         Item("屋敷で迎える、最初の朝だ。", "The first morning at the mansion.", (392, 981, 668, 1007)),
-        Item("設定", None, (1840, 976, 1890, 996)),  # chưa dịch xong: chưa hiện
+        Item("設定", None, (1840, 976, 1890, 996)),  # chưa dịch xong: chưa vẽ nhưng vẫn giữ chỗ
     ]
-    assert tray_app._overlay_items(items) == [(QRect(314, 809, 221, 21), "The first morning at the mansion.")]
+    assert tray_app._overlay_items(items) == (
+        [(QRect(314, 809, 221, 21), "The first morning at the mansion."), (QRect(1472, 805, 40, 16), None)],
+        "blocks",
+    )
     tray_app.worker.result.emit(1, items, False)
     assert tray_app.overlay.isVisible() and tray_app.overlay.geometry().topLeft() == QPoint(314, 809)
     tray_app.overlay.hide()
@@ -327,7 +390,7 @@ def test_translation_above_the_region_joins_all_blocks(qapp, monkeypatch):
     tray_app, _ = make_tray_app(monkeypatch, Config(overlay_position="above"))
     selected_region(tray_app)
     items = [Item("猫だ。", "A cat.", (0, 0, 200, 40)), Item("犬だ。", "A dog.", (0, 50, 200, 90)), Item("鳥", None)]
-    assert tray_app._overlay_items(items) == [(QRect(100, 300, 600, 100), "A cat.\nA dog.")]
+    assert tray_app._overlay_items(items) == ([(QRect(100, 300, 600, 100), "A cat.\nA dog.")], "above")
     tray_app.worker.result.emit(1, items, False)
     assert tray_app.overlay.geometry().bottom() == 300 - GAP - 1  # ngay trên vùng, không che chữ gốc
     tray_app.overlay.hide()
@@ -398,12 +461,74 @@ def test_first_run_guide_offers_shortcuts_and_is_shown_once(qapp, monkeypatch, t
     tray_app.hotkeys.clear()
 
 
-def test_opening_the_app_again_shows_the_guide_of_the_running_one(qapp, monkeypatch):
-    tray_app, _ = make_tray_app(monkeypatch, Config(welcomed=True))
+def test_opening_the_app_again_shows_the_panel_of_the_running_one(qapp, monkeypatch):
+    tray_app, _ = make_tray_app(monkeypatch, Config(welcomed=True, show_panel=False))
     monkeypatch.setattr(app_module, "INSTANCE_KEY", f"ScreenTranslator-test-{id(tray_app)}")
     assert not app_module._wake_running_instance()
     app_module._listen_for_wake(tray_app)
     assert app_module._wake_running_instance()
-    wait_until(qapp, lambda: tray_app.guide is not None)
-    tray_app.guide.accept()
+    wait_until(qapp, lambda: tray_app.panel.isVisible())
+    assert tray_app.config.show_panel
+    tray_app.panel.hide()
+    tray_app.hotkeys.clear()
+
+
+def test_pause_gives_hotkeys_back_and_resume_restores_live_mode(qapp, monkeypatch):
+    # phím tắt thật có thể đang bị bản app đang chạy giữ: giả lập Windows nhận đăng ký
+    monkeypatch.setattr(app_module.win32, "register_hotkey", lambda *args: True)
+    monkeypatch.setattr(app_module.win32, "unregister_hotkey", lambda *args: None)
+    tray_app, messages = make_tray_app(monkeypatch)
+    worker, panel = tray_app.worker, tray_app.panel
+    selected_region(tray_app)
+    tray_app.overlay.excluded_from_capture = True
+    tray_app.toggle_live()
+
+    panel.buttons["pause"].click()
+    assert tray_app.paused and worker.paused == [True]
+    assert not tray_app.live_timer.isActive() and not tray_app.overlay.isVisible()
+    assert tray_app.hotkeys._actions == {}  # game dùng lại được các phím này
+    assert "tạm dừng" in tray_app.tray.toolTip() and "Đã tạm dừng" in messages[-1]
+    assert panel.buttons["pause"].isChecked() and panel.buttons["pause"].text() == "Tiếp tục"
+    assert not panel.buttons["select"].isEnabled() and not tray_app._menu_actions["select"].isEnabled()
+    worker.result.emit(1, [Item("猫", "Cat", (5, 5, 40, 30))], True)  # lượt đang dịch dở lúc bấm dừng
+    assert not tray_app.overlay.isVisible()
+
+    tray_app._pause_action.trigger()  # tiếp tục từ menu
+    assert not tray_app.paused and worker.paused == [True, False]
+    assert len(tray_app.hotkeys._actions) == len(tray_app.config.hotkeys)
+    assert tray_app.live_timer.isActive() and worker.live_resets == 2  # lúc dừng đang bật live mode
+    assert panel.buttons["select"].isEnabled() and not panel.buttons["pause"].isChecked()
+    tray_app.toggle_live()
+    tray_app.overlay.hide()
+    tray_app.hint.hide()
+    tray_app.hotkeys.clear()
+
+
+def test_control_panel_does_everything_by_mouse(qapp, monkeypatch):
+    tray_app, _ = make_tray_app(monkeypatch, Config(panel_pos=(40, 50)))
+    saved = []
+    monkeypatch.setattr(app_module.config_store, "save", saved.append)
+    panel, calls = tray_app.panel, []
+    for action in ("select", "screen", "repeat", "live", "toggle"):
+        tray_app._handlers[action] = lambda action=action: calls.append(action)
+        panel.buttons[action].click()
+    assert calls == ["select", "screen", "repeat", "live", "toggle"]
+
+    tray_app._on_tray_activated(QSystemTrayIcon.ActivationReason.Trigger)  # bấm icon ở khay
+    assert panel.isVisible() and panel.pos() == QPoint(40, 50) and tray_app._panel_action.isChecked()
+    panel.grab()  # vẽ thử được
+
+    [above] = [button for button in panel.positions.buttons() if button.property("position") == "above"]
+    above.click()
+    panel.transparency.setValue(70)
+    panel.moved.emit(QPoint(60, 80))
+    assert tray_app.config.overlay_position == "above" and above.isChecked()
+    assert tray_app.config.overlay_opacity == 30 and panel.transparency_value.text() == "70%"
+    assert round(tray_app.overlay.appearance.background.alphaF(), 2) == 0.3
+    assert tray_app.config.panel_pos == (60, 80)
+    wait_until(qapp, lambda: saved)  # kéo xong mới lưu, một lần
+    assert saved == [tray_app.config]
+
+    panel.buttons["close"].click()
+    assert not panel.isVisible() and not tray_app.config.show_panel and not tray_app._panel_action.isChecked()
     tray_app.hotkeys.clear()

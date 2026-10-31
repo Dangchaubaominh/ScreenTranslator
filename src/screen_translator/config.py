@@ -49,7 +49,7 @@ OVERLAY_POSITIONS = {
     "below": "Ngay dưới vùng đã chọn (chữ gốc vẫn thấy)",
 }
 FONT_PX_RANGE = (14, 48)
-OPACITY_RANGE = (20, 100)
+OPACITY_RANGE = (0, 100)
 
 
 @dataclass(frozen=True)
@@ -68,6 +68,8 @@ class Config:
     overlay_opacity: int = 100  # % độ đặc của nền; thấp hơn thì chữ Nhật gốc lộ ra sau bản dịch
     overlay_color: str = "#0c101c"
     welcomed: bool = False  # đã xem màn hình chào lần đầu
+    show_panel: bool = True  # thanh điều khiển nổi
+    panel_pos: tuple[int, int] | None = None  # chỗ thanh điều khiển (tọa độ logic); None: giữa mép trên màn hình
 
     @property
     def hotkeys(self) -> dict[str, str]:
@@ -102,6 +104,9 @@ def load(path: Path = CONFIG_PATH) -> Config:
         config = replace(config, overlay_position=Config.overlay_position)
     if not re.fullmatch(r"#[0-9a-fA-F]{6}", str(config.overlay_color)):
         config = replace(config, overlay_color=Config.overlay_color)
+    pos = config.panel_pos
+    valid_pos = isinstance(pos, list | tuple) and len(pos) == 2 and all(isinstance(v, int) for v in pos)
+    config = replace(config, panel_pos=tuple(pos) if valid_pos else None)
     return replace(
         config,
         overlay_font_px=_clamp(config.overlay_font_px, FONT_PX_RANGE, Config.overlay_font_px),

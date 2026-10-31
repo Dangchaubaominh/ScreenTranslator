@@ -170,21 +170,25 @@ class SettingsDialog(QDialog):
         self._font_px = QSpinBox(suffix=" px")
         self._font_px.setRange(*FONT_PX_RANGE)
         self._font_px.setValue(config.overlay_font_px)
-        self._opacity = QSpinBox(suffix=" %", singleStep=10)
-        self._opacity.setRange(*OPACITY_RANGE)
-        self._opacity.setValue(config.overlay_opacity)
+        self._transparency = QSpinBox(suffix=" %", singleStep=10)  # cài đặt lưu độ đặc = 100 − độ trong suốt
+        self._transparency.setRange(100 - OPACITY_RANGE[1], 100 - OPACITY_RANGE[0])
+        self._transparency.setValue(100 - config.overlay_opacity)
         self._color = QColor(config.overlay_color)
         self._color_button = QPushButton("Đổi màu…")
         self._color_button.clicked.connect(self._pick_color)
         self._preview = OverlayPreview()
-        for signal in (self._position.currentIndexChanged, self._font_px.valueChanged, self._opacity.valueChanged):
+        for signal in (
+            self._position.currentIndexChanged,
+            self._font_px.valueChanged,
+            self._transparency.valueChanged,
+        ):
             signal.connect(self._refresh_preview)
         self._refresh_preview()
         display = QWidget()
         form = QFormLayout()
         form.addRow("Chỗ hiện bản dịch:", self._position)
         form.addRow("Cỡ chữ lớn nhất:", self._font_px)
-        form.addRow("Độ đặc của nền:", self._opacity)
+        form.addRow("Độ trong suốt của nền:", self._transparency)
         form.addRow("Màu nền:", self._color_button)
         layout = QVBoxLayout(display)
         layout.addLayout(form)
@@ -221,7 +225,7 @@ class SettingsDialog(QDialog):
             ocr_engine=self._ocr_engine.currentData(),
             overlay_position=self._position.currentData(),
             overlay_font_px=self._font_px.value(),
-            overlay_opacity=self._opacity.value(),
+            overlay_opacity=100 - self._transparency.value(),
             overlay_color=self._color.name(),
             **{f"hotkey_{action}": edit.text().strip() for action, edit in self._hotkeys.items()},
         )
@@ -258,20 +262,23 @@ class SettingsDialog(QDialog):
 
 GUIDE = """
 <h2>ScreenTranslator</h2>
-<p>App chạy nền: icon <b>訳</b> ở khay hệ thống, cạnh đồng hồ (có thể nằm trong mũi tên <b>^</b>).
-Bấm chuột trái vào icon để chọn vùng, chuột phải để mở menu.</p>
+<p>Mọi việc làm được bằng chuột trên <b>thanh điều khiển</b> nổi ở mép trên màn hình (nắm chỗ trống
+để kéo đi), hoặc bằng phím tắt. Icon <b>訳</b> ở khay hệ thống, cạnh đồng hồ (có thể nằm trong mũi tên
+<b>^</b>): chuột trái ẩn / hiện thanh điều khiển, chuột phải mở menu.</p>
 <h3>Dịch visual novel</h3>
 <ol>
-<li>Mở game, bấm <b>{select}</b> rồi kéo chuột quanh khung thoại.</li>
-<li>Bấm <b>{live}</b> để bật live mode: câu mới hiện ra là tự được dịch, icon chuyển xanh lá.</li>
-<li>Menu, nút bấm, bản đồ…: bấm <b>{screen}</b> để dịch cả cửa sổ game.</li>
-<li>Muốn xem chữ Nhật gốc: <b>{toggle}</b> ẩn / hiện bản dịch, hoặc cho bản dịch hiện ngay trên / dưới
-khung thoại (menu → Cài đặt → Hiển thị).</li>
+<li>Mở game, bấm <b>Chọn vùng</b> ({select}) rồi kéo chuột quanh khung thoại.</li>
+<li>Bấm <b>Live</b> ({live}): câu mới hiện ra là tự được dịch, icon chuyển xanh lá.</li>
+<li>Menu, nút bấm, bản đồ…: bấm <b>Cả cửa sổ</b> ({screen}).</li>
+<li>Muốn xem chữ Nhật gốc: chọn <b>Hiện: Trên / Dưới</b> cho bản dịch nằm ngay trên / dưới khung thoại,
+kéo thanh <b>Trong suốt</b>, hoặc {toggle} ẩn / hiện bản dịch.</li>
+<li>Cần chơi mà không dịch: <b>Tạm dừng</b> trả phím tắt cho game và gỡ model dịch khỏi card đồ họa.</li>
 <li>Tên nhân vật bị dịch sai: menu → <i>Tên riêng, thuật ngữ…</i></li>
 </ol>
 <h3>Phím tắt</h3>
 <table cellspacing="0" cellpadding="3">{rows}</table>
-<p>Cần mở Ollama để dịch. Icon xám: đang nạp model, xanh dương: sẵn sàng, xanh lá: live mode đang bật.</p>
+<p>Cần mở Ollama để dịch. Icon xám: đang nạp model, xanh dương: sẵn sàng, xanh lá: live mode đang bật,
+chấm cam: đang tạm dừng.</p>
 """
 
 
