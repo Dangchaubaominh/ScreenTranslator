@@ -135,5 +135,33 @@ def test_other_models_get_names_replaced_in_the_text():
     assert client.calls[0][1]["messages"][1] == {"role": "user", "content": "Sakuyaは猫"}
 
 
+CONTEXT = [("魔理沙、また来たの", "Marisa, you're here again?"), ("暇だろ？", "You're bored, right?")]
+
+
+def test_previous_turns_come_before_the_line_to_translate():
+    client = FakeClient()
+    translate(client, "vntl-gemma2-2b", "暇じゃない", context=CONTEXT)
+    assert client.calls[0][1]["prompt"] == (
+        "<<METADATA>>\n<<TRANSLATE>>\n"
+        "<<JAPANESE>>\n魔理沙、また来たの\n<<ENGLISH>>\nMarisa, you're here again?<eos>\n"
+        "<<JAPANESE>>\n暇だろ？\n<<ENGLISH>>\nYou're bored, right?<eos>\n"
+        "<<JAPANESE>>\n暇じゃない\n<<ENGLISH>>\n"
+    )
+
+    translate(client, "qwen2.5:3b", "暇じゃない", context=CONTEXT)  # model chat: các lượt hỏi / đáp trước
+    assert client.calls[1][1]["messages"][1:] == [
+        {"role": "user", "content": "魔理沙、また来たの"},
+        {"role": "assistant", "content": "Marisa, you're here again?"},
+        {"role": "user", "content": "暇だろ？"},
+        {"role": "assistant", "content": "You're bored, right?"},
+        {"role": "user", "content": "暇じゃない"},
+    ]
+
+    # mẫu prompt cố định, không có chỗ cho ngữ cảnh
+    translate(client, "translategemma:4b", "暇じゃない", context=CONTEXT)
+    translate(client, "hf.co/LiquidAI/LFM2-350M-ENJP-MT-GGUF:Q4_K_M", "暇じゃない", context=CONTEXT)
+    assert [len(call["messages"]) for _, call in client.calls[2:]] == [1, 2]
+
+
 def test_tidy_turns_japanese_quotes_into_english_ones():
     assert tidy(" 「Hello」 and 『hi』 ") == "“Hello” and ‘hi’"

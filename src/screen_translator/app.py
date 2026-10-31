@@ -303,7 +303,7 @@ class TrayApp(QObject):
         if area != self.area:  # live mode theo dõi vùng mới
             self.watcher = live.ChangeWatcher()
         self.area, self.area_is_selection = area, selection
-        self.job = self.worker.submit_image(image)
+        self.job = self.worker.submit_image(image, dialogue=selection)
         if self.loading:  # lần đầu phải chờ nạp model: nói rõ đang chờ gì
             self._show_status(self.status_text)
         else:  # vùng chọn: câu cũ mờ đi trong lúc chờ câu mới

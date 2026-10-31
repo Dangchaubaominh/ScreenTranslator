@@ -38,6 +38,7 @@ def fake(monkeypatch):
     state = {
         "translated": [],
         "glossaries": [],
+        "contexts": [],
         "unloaded": [],
         "release": threading.Event(),
         "fail": {},
@@ -55,6 +56,7 @@ def fake(monkeypatch):
             raise state["fail"][ja]
         state["translated"].append((model, ja, kwargs["options"]))
         state["glossaries"].append(kwargs.get("glossary"))
+        state["contexts"].append((ja, kwargs.get("context")))
         return f"「{ja}」 in English", None
 
     monkeypatch.setattr(worker_module, "create_reader", fake_create_reader)
@@ -149,6 +151,30 @@ def test_cache_survives_restart_and_is_shown_first(qapp, fake, tmp_path):
     first = events["result"][0][1]
     assert [item.en is not None for item in first] == [True, False]  # nhãn "設定" có sẵn trong cache hiện ngay
     assert [ja for _, ja, _ in fake["translated"]].count("設定") == 1
+
+
+def test_dialogue_is_translated_with_the_turns_before_it(qapp, fake):
+    w, events = start(qapp)
+    w.submit_image(screen(TextBox("おはよう", 410, 810, 600, 846)), dialogue=True)  # vùng tự chọn: khung thoại
+    wait_until(qapp, lambda: len(finished(events)) == 1)
+    w.submit_image(screen(TextBox("ロード", 1500, 980, 1540, 1000)))  # cả cửa sổ: không dùng, không ghi ngữ cảnh
+    wait_until(qapp, lambda: len(finished(events)) == 2)
+    w.submit_image(screen(MENU, DIALOG), dialogue=True)  # tên người nói + lời thoại: chung một lượt
+    wait_until(qapp, lambda: len(finished(events)) == 3)
+    w.submit_image(screen(MENU, DIALOG), dialogue=True)  # Dịch lại cùng câu: không ghi thêm
+    wait_until(qapp, lambda: len(finished(events)) == 4)
+    w.submit_live(screen(TextBox("また明日", 410, 810, 600, 846)), settled=True)
+    wait_until(qapp, lambda: len(finished(events)) == 5)
+    w.stop()
+    morning = ("おはよう", "“おはよう” in English")
+    turn = (f"設定\n{DIALOG.text}", f"“設定” in English\n“{DIALOG.text}” in English")
+    assert fake["contexts"][1:] == [
+        ("おはよう", []),
+        ("ロード", []),
+        (DIALOG.text, [morning]),
+        ("設定", [morning]),
+        ("また明日", [morning, turn]),
+    ]
 
 
 def test_one_bad_block_does_not_spoil_the_rest(qapp, fake):

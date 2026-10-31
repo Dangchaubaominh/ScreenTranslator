@@ -4,6 +4,7 @@ import logging
 import queue
 import threading
 import time
+from collections import deque
 from dataclasses import dataclass, replace
 from pathlib import Path
 
@@ -22,6 +23,8 @@ log = logging.getLogger(__name__)
 CACHE_PATH = APP_DIR / "translations.sqlite3"
 UNTRANSLATED = "(không dịch được)"
 READY = "Sẵn sàng"  # trạng thái khi đã nạp xong OCR và model dịch
+CONTEXT_TURNS = 4  # số lượt thoại ngay trước gửi kèm khi dịch, để model hiểu mạch hội thoại
+DIALOGUE = ("live", "dialogue")  # lượt dịch khung thoại (live mode, vùng tự chọn): dùng và ghi nhớ ngữ cảnh
 
 
 @dataclass(frozen=True)
@@ -64,6 +67,8 @@ class Worker(QObject):
         # live mode: chữ đang hiện trên overlay, và chữ đọc được ở lần trước lúc hình còn đang đổi
         self._live_shown: tuple[str, ...] | None = None
         self._live_pending: tuple[str, ...] | None = None
+        # các lượt thoại vừa hiện (chữ Nhật, bản dịch), mỗi lượt là cả khung thoại (tên người nói + lời thoại)
+        self._context: deque[tuple[str, str]] = deque(maxlen=CONTEXT_TURNS)
         self._thread = threading.Thread(target=self._run, name="ocr-translate", daemon=True)
 
     # --- gọi từ luồng giao diện ---
@@ -72,8 +77,9 @@ class Worker(QObject):
         """Gọi sau khi đã nối signal, để không lỡ các thông báo lúc khởi động."""
         self._thread.start()
 
-    def submit_image(self, image: Image.Image) -> int:
-        return self._submit("image", image)
+    def submit_image(self, image: Image.Image, *, dialogue: bool = False) -> int:
+        """dialogue: vùng tự chọn (thường là khung thoại), dịch kèm ngữ cảnh. Cả cửa sổ (menu, nút…) thì không."""
+        return self._submit("dialogue" if dialogue else "image", image)
 
     def submit_text(self, ja: str) -> int:
         return self._submit("text", ja)
@@ -163,6 +169,7 @@ class Worker(QObject):
             return
 
         glossary = self._read_glossary()
+        context = list(self._context) if kind in DIALOGUE else []
         known = [self._known(item.ja, glossary) for item in items]
         # khối có sẵn bản dịch hiện ngay; sau đó câu dài (thường là lời thoại) trước nhãn ngắn
         order = sorted(range(len(items)), key=lambda i: (known[i] is None, -len(items[i].ja)))
@@ -170,10 +177,13 @@ class Worker(QObject):
             if job_id != self._latest:
                 log.info("Lượt %d dừng giữa chừng: đã có lượt mới hơn", job_id)
                 return
-            items[i] = replace(items[i], en=known[i] or self._translate(items[i].ja, glossary))
+            items[i] = replace(items[i], en=known[i] or self._translate(items[i].ja, glossary, context))
             self.result.emit(job_id, list(items), done == len(items))
-        if kind == "live":  # chỉ ghi nhận khi đã dịch hết: lượt bị ngắt giữa chừng thì lượt live sau dịch tiếp
+        # chỉ ghi nhận khi đã dịch hết: lượt bị ngắt giữa chừng thì lượt live sau dịch tiếp
+        if kind == "live":
             self._live_shown = key
+        if kind in DIALOGUE:
+            self._remember(items)
         log.info(
             "Lượt %d: %d khối, OCR %.2fs, dịch %.2fs | %s",
             job_id,
@@ -196,13 +206,21 @@ class Worker(QObject):
         terms = relevant(glossary, ja)
         return exact(terms, ja) or self._cache.get(self._config.model, ja, glossary=signature(terms))
 
-    def _translate(self, ja: str, glossary: list[Entry]) -> str:
+    def _remember(self, items: list[Item]) -> None:
+        """Cả khung thoại vừa hiện thành một lượt ngữ cảnh cho câu sau; bấm Dịch lại cùng câu thì không ghi thêm."""
+        shown = [item for item in items if item.en != UNTRANSLATED]
+        turn = ("\n".join(item.ja for item in shown), "\n".join(item.en for item in shown))
+        if shown and turn not in self._context:
+            self._context.append(turn)
+
+    def _translate(self, ja: str, glossary: list[Entry], context: list[tuple[str, str]]) -> str:
         try:
             text, _ = translate(
                 self._client,
                 self._config.model,
                 ja,
                 glossary=glossary,
+                context=context,
                 options=self._config.ollama_options,
                 keep_alive=self._config.keep_alive,
             )

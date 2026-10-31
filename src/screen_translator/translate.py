@@ -37,8 +37,10 @@ def style_of(tag: str) -> str:
     return "chat"
 
 
-def vntl_prompt(ja: str, glossary: Sequence[Entry] = ()) -> str:
-    return f"<<METADATA>>\n{vntl_metadata(glossary)}<<TRANSLATE>>\n<<JAPANESE>>\n{ja}\n<<ENGLISH>>\n"
+def vntl_prompt(ja: str, glossary: Sequence[Entry] = (), context: Sequence[tuple[str, str]] = ()) -> str:
+    """context: các câu trước (chữ Nhật, bản dịch) xếp nối tiếp như lúc VNTL được huấn luyện, xem trang model."""
+    history = "".join(f"<<JAPANESE>>\n{prev_ja}\n<<ENGLISH>>\n{prev_en}<eos>\n" for prev_ja, prev_en in context)
+    return f"<<METADATA>>\n{vntl_metadata(glossary)}<<TRANSLATE>>\n{history}<<JAPANESE>>\n{ja}\n<<ENGLISH>>\n"
 
 
 def translategemma_prompt(ja: str) -> str:
@@ -73,6 +75,7 @@ def translate(
     ja: str,
     *,
     glossary: Sequence[Entry] = (),
+    context: Sequence[tuple[str, str]] = (),
     options: dict | None = None,
     keep_alive: str = "30m",
 ):
@@ -80,6 +83,8 @@ def translate(
 
     glossary: cả danh sách tên riêng / thuật ngữ, chỉ các mục có trong `ja` vào prompt. Cả đoạn trùng một mục
     thì trả luôn bản dịch khai sẵn, phản hồi là None.
+    context: vài câu thoại ngay trước (chữ Nhật, bản dịch) để model hiểu mạch hội thoại: ai nói với ai, xưng hô,
+    chủ ngữ bị lược. Mẫu prompt cố định của translategemma và LFM2 không có chỗ cho ngữ cảnh, nên bỏ qua.
     """
     terms = relevant(glossary, ja)
     if (known := exact(terms, ja)) is not None:
@@ -91,7 +96,7 @@ def translate(
         stop = ["<<", "<eos>"] + ([] if "\n" in ja.strip() else ["\n"])
         r = client.generate(
             model=tag,
-            prompt=vntl_prompt(ja, terms),
+            prompt=vntl_prompt(ja, terms, context),
             raw=True,
             options={**opts, "stop": stop},
             keep_alive=keep_alive,
@@ -101,9 +106,15 @@ def translate(
     source = substitute(ja, terms)  # các model khác không có chỗ khai báo tên: thay thẳng trong câu
     if style == "translategemma":
         messages = [{"role": "user", "content": translategemma_prompt(source)}]
+    elif style == "lfm2":
+        messages = [{"role": "system", "content": "Translate to English."}, {"role": "user", "content": source}]
     else:
-        system = "Translate to English." if style == "lfm2" else SYSTEM_PROMPT
-        messages = [{"role": "system", "content": system}, {"role": "user", "content": source}]
+        history = [
+            {"role": role, "content": text}
+            for prev_ja, prev_en in context
+            for role, text in (("user", prev_ja), ("assistant", prev_en))
+        ]
+        messages = [{"role": "system", "content": SYSTEM_PROMPT}, *history, {"role": "user", "content": source}]
     think = {"think": False} if tag.lower().startswith("qwen3") else {}
     r = client.chat(model=tag, messages=messages, options=opts, keep_alive=keep_alive, **think)
     return keep_lines(r.message.content, ja), r

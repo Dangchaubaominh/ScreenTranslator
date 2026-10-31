@@ -218,6 +218,7 @@ class FakeWorker(QObject):
     def __init__(self, config):
         super().__init__()
         self.jobs = []
+        self.dialogue = []  # lượt ảnh nào dịch kèm ngữ cảnh hội thoại
         self.live_resets = 0
         self.paused = []
 
@@ -227,8 +228,9 @@ class FakeWorker(QObject):
     def set_paused(self, paused):
         self.paused.append(paused)
 
-    def submit_image(self, image):
+    def submit_image(self, image, *, dialogue=False):
         self.jobs.append(image)
+        self.dialogue.append(dialogue)
         return len(self.jobs)
 
     def submit_live(self, image, *, settled):
@@ -260,6 +262,7 @@ def test_selected_region_with_one_block_is_covered_whole(qapp, monkeypatch):
     shot = Image.new("RGB", (monitor.width, monitor.height))
     tray_app._on_selected(QRect(10, 20, 300, 80), screen, monitor, shot)
     assert tray_app.worker.jobs[0].size == (round(300 * dpr), round(80 * dpr))
+    assert tray_app.worker.dialogue == [True]  # vùng tự chọn thường là khung thoại: dịch kèm câu trước
     assert tray_app.overlay.isVisible()  # "Đang dịch…"
 
     tray_app.worker.result.emit(2, [Item("猫", "Dog")], True)  # lượt cũ, bỏ qua
@@ -346,6 +349,7 @@ def test_window_translation_puts_each_block_over_its_own_text(qapp, monkeypatch)
     monitor = app_module.capture.Monitor(0, 0, 1920, 1080)
     area = app_module.capture.Region.from_physical(monitor, (0, 0), 1.25, 0, 30, 1920, 1050)
     tray_app._submit_image(area, Image.new("RGB", (1920, 1020)), selection=False)
+    assert tray_app.worker.dialogue == [False]  # menu, nút bấm…: không dính ngữ cảnh hội thoại
     items = [
         Item("屋敷で迎える、最初の朝だ。", "The first morning at the mansion.", (392, 981, 668, 1007)),
         Item("設定", None, (1840, 976, 1890, 996)),  # chưa dịch xong: chưa vẽ nhưng vẫn giữ chỗ
