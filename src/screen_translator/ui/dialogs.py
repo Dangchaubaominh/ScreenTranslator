@@ -24,10 +24,10 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ..config import FONT_PX_RANGE, HOTKEY_LABELS, OCR_ENGINES, OPACITY_RANGE, OVERLAY_POSITIONS, PROFILES, Config
+from ..config import FONT_PX_RANGE, HOTKEY_LABELS, OCR_ENGINES, OPACITY_RANGE, PROFILES, Config
 from ..hotkeys import parse_hotkey
 from ..shortcuts import LABELS as SHORTCUT_LABELS
-from .overlay import Appearance, fit_beside, fit_text, paint_block
+from .overlay import Appearance, fit_text, paint_block
 
 
 class EditDialog(QDialog):
@@ -94,27 +94,25 @@ class StartupOptions(QGroupBox):
 
 
 class OverlayPreview(QWidget):
-    """Khung thoại giả, vẽ bản dịch theo cỡ chữ / màu / độ trong / vị trí đang chọn."""
+    """Khung thoại giả, vẽ bản dịch theo cỡ chữ / màu / độ trong đang chọn."""
 
     JA = "霊夢「おはよう、魔理沙。今日は早いのね」"
     EN = 'Reimu: "Good morning, Marisa. You\'re early today."'
 
     def __init__(self):
         super().__init__()
-        self.setFixedSize(480, 310)  # đủ chỗ cho 3 dòng chữ 48 px bên trên / dưới khung thoại
-        self.appearance, self.position = Appearance(), "cover"
+        self.setFixedSize(480, 160)
+        self.appearance = Appearance()
 
-    def set_appearance(self, appearance: Appearance, position: str) -> None:
-        self.appearance, self.position = appearance, position
+    def set_appearance(self, appearance: Appearance) -> None:
+        self.appearance = appearance
         self.update()
 
     def paintEvent(self, event) -> None:
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         painter.fillRect(self.rect(), QColor(64, 82, 70))  # cảnh nền của game
-        # khung thoại dồn về phía đối diện chỗ đặt bản dịch, để chữ to vẫn đủ chỗ
-        top = {"above": self.height() - 86, "below": 16}.get(self.position, (self.height() - 70) // 2)
-        box = QRect(16, top, self.width() - 32, 70)
+        box = QRect(16, (self.height() - 70) // 2, self.width() - 32, 70)
         painter.fillRect(box, QColor(22, 26, 40))
         font = QFont("Yu Gothic UI")
         font.setPixelSize(20)
@@ -123,13 +121,7 @@ class OverlayPreview(QWidget):
         painter.drawText(
             box.adjusted(14, 0, -14, 0), Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, self.JA
         )
-        max_px = self.appearance.max_px
-        fitted = (
-            fit_text(box, self.EN, max_px)
-            if self.position == "cover"
-            else fit_beside(box, self.EN, self.position, max_px, self.rect())
-        )
-        paint_block(painter, fitted, self.EN, self.appearance)
+        paint_block(painter, fit_text(box, self.EN, self.appearance.max_px), self.EN, self.appearance)
 
 
 class SettingsDialog(QDialog):
@@ -163,10 +155,6 @@ class SettingsDialog(QDialog):
         layout.addWidget(self.startup)
         layout.addStretch()
 
-        self._position = QComboBox()
-        for key, label in OVERLAY_POSITIONS.items():
-            self._position.addItem(label, key)
-        self._position.setCurrentIndex(self._position.findData(config.overlay_position))
         self._font_px = QSpinBox(suffix=" px")
         self._font_px.setRange(*FONT_PX_RANGE)
         self._font_px.setValue(config.overlay_font_px)
@@ -177,16 +165,11 @@ class SettingsDialog(QDialog):
         self._color_button = QPushButton("Đổi màu…")
         self._color_button.clicked.connect(self._pick_color)
         self._preview = OverlayPreview()
-        for signal in (
-            self._position.currentIndexChanged,
-            self._font_px.valueChanged,
-            self._transparency.valueChanged,
-        ):
+        for signal in (self._font_px.valueChanged, self._transparency.valueChanged):
             signal.connect(self._refresh_preview)
         self._refresh_preview()
         display = QWidget()
         form = QFormLayout()
-        form.addRow("Chỗ hiện bản dịch:", self._position)
         form.addRow("Cỡ chữ lớn nhất:", self._font_px)
         form.addRow("Độ trong suốt của nền:", self._transparency)
         form.addRow("Màu nền:", self._color_button)
@@ -223,7 +206,6 @@ class SettingsDialog(QDialog):
             model=self._model.currentText().strip(),
             profile=self._profile.currentData(),
             ocr_engine=self._ocr_engine.currentData(),
-            overlay_position=self._position.currentData(),
             overlay_font_px=self._font_px.value(),
             overlay_opacity=100 - self._transparency.value(),
             overlay_color=self._color.name(),
@@ -241,7 +223,7 @@ class SettingsDialog(QDialog):
         self._color_button.setStyleSheet(
             f"background-color: {config.overlay_color}; color: {Appearance.from_config(config).text_color().name()}"
         )
-        self._preview.set_appearance(Appearance.from_config(config), config.overlay_position)
+        self._preview.set_appearance(Appearance.from_config(config))
 
     def _validate(self) -> None:
         parsed = []
@@ -270,8 +252,8 @@ GUIDE = """
 <li>Mở game, bấm <b>Chọn vùng</b> ({select}) rồi kéo chuột quanh khung thoại.</li>
 <li>Bấm <b>Live</b> ({live}): câu mới hiện ra là tự được dịch, icon chuyển xanh lá.</li>
 <li>Menu, nút bấm, bản đồ…: bấm <b>Cả cửa sổ</b> ({screen}).</li>
-<li>Muốn xem chữ Nhật gốc: chọn <b>Hiện: Trên / Dưới</b> cho bản dịch nằm ngay trên / dưới khung thoại,
-kéo thanh <b>Trong suốt</b>, hoặc {toggle} ẩn / hiện bản dịch.</li>
+<li>Đọc xong bản dịch chụp một lần: bấm <b>Esc</b> để xóa. Lúc bật live mode thì Esc vẫn để cho game.</li>
+<li>Muốn xem chữ Nhật gốc: kéo thanh <b>Trong suốt</b>, hoặc {toggle} ẩn / hiện bản dịch.</li>
 <li>Cần chơi mà không dịch: <b>Tạm dừng</b> trả phím tắt cho game và gỡ model dịch khỏi card đồ họa.</li>
 <li>Tên nhân vật bị dịch sai: menu → <i>Tên riêng, thuật ngữ…</i></li>
 </ol>
@@ -289,9 +271,10 @@ class GuideDialog(QDialog):
         super().__init__(None, Qt.WindowType.WindowStaysOnTopHint)
         self.setWindowTitle("Hướng dẫn — ScreenTranslator")
         self.startup = startup
+        labels = [(hotkeys[action], label) for action, label in HOTKEY_LABELS.items()]
         rows = "".join(
-            f"<tr><td><b>{escape(hotkeys[action])}</b></td><td>{escape(label)}</td></tr>"
-            for action, label in HOTKEY_LABELS.items()
+            f"<tr><td><b>{escape(key)}</b></td><td>{escape(label)}</td></tr>"
+            for key, label in [*labels, ("Esc", "Xóa bản dịch đang hiện (trừ live mode)")]
         )
         text = QLabel(GUIDE.format(rows=rows, **{action: escape(key) for action, key in hotkeys.items()}))
         text.setWordWrap(True)

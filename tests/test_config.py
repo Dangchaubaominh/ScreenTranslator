@@ -29,12 +29,12 @@ def test_unknown_keys_and_bad_values_are_ignored(tmp_path):
 
 def test_overlay_settings_are_kept_in_range(tmp_path):
     path = tmp_path / "config.json"
-    data = {"overlay_position": "left", "overlay_font_px": 200, "overlay_opacity": -5, "overlay_color": "red"}
+    data = {"overlay_font_px": 200, "overlay_opacity": -5, "overlay_color": "red"}
     path.write_text(json.dumps(data), encoding="utf-8")
     assert load(path) == Config(overlay_font_px=48, overlay_opacity=0)
-    data = {"overlay_position": "above", "overlay_font_px": "big", "panel_pos": [10, 20]}
+    data = {"overlay_position": "above", "overlay_font_px": "big", "panel_pos": [10, 20]}  # cài đặt cũ đã bỏ
     path.write_text(json.dumps(data), encoding="utf-8")
-    assert load(path) == Config(overlay_position="above", panel_pos=(10, 20))
+    assert load(path) == Config(panel_pos=(10, 20))
     path.write_text(json.dumps({"panel_pos": [10, "x"]}), encoding="utf-8")
     assert load(path) == Config()
 

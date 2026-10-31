@@ -42,12 +42,6 @@ HOTKEY_LABELS = {
     "edit": "Sửa chữ OCR gần nhất",
 }
 
-# Chỗ hiện bản dịch của vùng đã chọn; dịch cả cửa sổ game thì luôn đè lên từng khối chữ
-OVERLAY_POSITIONS = {
-    "cover": "Đè lên chữ gốc",
-    "above": "Ngay trên vùng đã chọn (chữ gốc vẫn thấy)",
-    "below": "Ngay dưới vùng đã chọn (chữ gốc vẫn thấy)",
-}
 FONT_PX_RANGE = (14, 48)
 OPACITY_RANGE = (0, 100)
 
@@ -63,7 +57,6 @@ class Config:
     hotkey_live: str = "Ctrl+Alt+L"
     hotkey_toggle: str = "Ctrl+Alt+H"
     hotkey_edit: str = "Ctrl+Alt+E"
-    overlay_position: str = "cover"
     overlay_font_px: int = 34  # cỡ chữ lớn nhất của bản dịch; khung nhỏ thì chữ tự thu nhỏ cho vừa
     overlay_opacity: int = 100  # % độ đặc của nền; thấp hơn thì chữ Nhật gốc lộ ra sau bản dịch
     overlay_color: str = "#0c101c"
@@ -100,8 +93,6 @@ def load(path: Path = CONFIG_PATH) -> Config:
         config = replace(config, profile=Config.profile)
     if config.ocr_engine not in OCR_ENGINES:
         config = replace(config, ocr_engine=Config.ocr_engine)
-    if config.overlay_position not in OVERLAY_POSITIONS:
-        config = replace(config, overlay_position=Config.overlay_position)
     if not re.fullmatch(r"#[0-9a-fA-F]{6}", str(config.overlay_color)):
         config = replace(config, overlay_color=Config.overlay_color)
     pos = config.panel_pos

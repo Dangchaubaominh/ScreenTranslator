@@ -9,7 +9,7 @@ from dataclasses import replace
 
 import ollama
 from PIL import Image
-from PySide6.QtCore import QObject, QPoint, QRect, QRectF, Qt, QTimer
+from PySide6.QtCore import QEvent, QObject, QPoint, QRect, QRectF, Qt, QTimer
 from PySide6.QtGui import QColor, QCursor, QFont, QGuiApplication, QIcon, QPainter, QPixmap, QScreen
 from PySide6.QtNetwork import QLocalServer, QLocalSocket
 from PySide6.QtWidgets import QApplication, QDialog, QMenu, QSystemTrayIcon
@@ -99,6 +99,7 @@ class TrayApp(QObject):
             "live": self.toggle_live,
             "toggle": self.toggle_overlay,
             "edit": self.open_editor,
+            "escape": self.dismiss,
         }
         self.menu = QMenu()  # giữ tham chiếu, không thì Python thu hồi mất menu
         self._panel_action = self.menu.addAction("Thanh điều khiển")
@@ -120,7 +121,6 @@ class TrayApp(QObject):
         self.menu.addAction("Thoát").triggered.connect(self.quit)
         self.panel = ControlPanel(self.menu)
         self.panel.triggered.connect(self._on_panel_action)
-        self.panel.position_changed.connect(lambda position: self.set_display(overlay_position=position))
         self.panel.transparency_changed.connect(lambda value: self.set_display(overlay_opacity=100 - value))
         self.panel.moved.connect(lambda pos: self.set_display(panel_pos=(pos.x(), pos.y())))
         self.tray = QSystemTrayIcon()
@@ -136,6 +136,10 @@ class TrayApp(QObject):
         self.hotkeys.triggered.connect(lambda action: self._handlers[action]())
         self.edit_dialog.retranslate.connect(self.retranslate)
         self._register_hotkeys()
+        # Esc xóa bản dịch: giữ phím Esc theo lúc bản dịch hiện / ẩn, và nhả khi cửa sổ của app (chọn vùng,
+        # hộp thoại, menu) đang được bấm vào để Esc đóng cửa sổ đó
+        self.overlay.installEventFilter(self)
+        QGuiApplication.instance().focusWindowChanged.connect(lambda _: self._sync_escape())
         self.tray.show()
 
     def _register_hotkeys(self) -> None:
@@ -179,12 +183,7 @@ class TrayApp(QObject):
         self.tray.setIcon(icon)
         self.tray.setToolTip(f"{APP_NAME} — {text}")
         self.panel.set_status(icon, text)
-        self.panel.set_state(
-            live=live_on,
-            paused=self.paused,
-            position=self.config.overlay_position,
-            transparency=100 - self.config.overlay_opacity,
-        )
+        self.panel.set_state(live=live_on, paused=self.paused, transparency=100 - self.config.overlay_opacity)
         self._pause_action.setChecked(self.paused)
         for action in self._menu_actions.values():
             action.setEnabled(not self.paused)
@@ -310,27 +309,23 @@ class TrayApp(QObject):
             return
         x, y, w, h = self.area.to_logical()
         rect = QRect(x, y, w, h) if self.area_is_selection else QRect(x + 16, y + 16, min(w - 32, 420), 48)
-        self.overlay.show_text(rect, text, dim=True, position=self._position())
+        self.overlay.show_text(rect, text, dim=True)
 
-    def _position(self) -> str:
-        """Bản dịch vùng đã chọn đặt theo cài đặt; dịch cả cửa sổ thì luôn đè lên từng khối chữ."""
-        return self.config.overlay_position if self.area_is_selection else "cover"
-
-    def _overlay_items(self, items: list[Item]) -> tuple[list[tuple[QRect, str | None]], str]:
-        """Khung (tọa độ logic) + bản dịch cần vẽ, và cách đặt (`position` của Overlay.show_items)."""
+    def _overlay_items(self, items: list[Item]) -> tuple[list[tuple[QRect, str | None]], bool]:
+        """Khung (tọa độ logic) + bản dịch cần vẽ, và có vẽ theo từng khối chữ không (`blocks` của show_items)."""
         if self.area is None:
-            return [], "cover"
-        if self.area_is_selection and (len(items) == 1 or self._position() != "cover"):
-            # một khối chữ (thường là hộp thoại), hoặc bản dịch đặt cạnh vùng: một khung theo cả vùng đã chọn
-            done = [item.en for item in items if item.en is not None]
-            return ([(QRect(*self.area.to_logical()), "\n".join(done))] if done else []), self._position()
+            return [], False
+        if self.area_is_selection and len(items) == 1:
+            # một khối chữ (thường là hộp thoại): một khung theo cả vùng đã chọn
+            en = items[0].en
+            return ([(QRect(*self.area.to_logical()), en)] if en is not None else []), False
         # mỗi khối chữ một khung; khối chưa dịch xong (en None) vẫn giữ chỗ để khung khác không lấn vào
-        return [(QRect(*self.area.sub(*item.box).to_logical()), item.en) for item in items if item.box], "blocks"
+        return [(QRect(*self.area.sub(*item.box).to_logical()), item.en) for item in items if item.box], True
 
     def _show_result(self, items: list[Item]) -> None:
-        blocks, position = self._overlay_items(items)
+        boxes, blocks = self._overlay_items(items)
         bounds = QRect(*self.area.to_logical()) if self.area is not None else None
-        self.overlay.show_items(blocks, position=position, bounds=bounds)  # khung không ra ngoài cửa sổ game
+        self.overlay.show_items(boxes, blocks=blocks, bounds=bounds)  # khung không ra ngoài cửa sổ game
         self.shown_items = items
 
     # --- kết quả từ luồng phụ ---
@@ -404,6 +399,7 @@ class TrayApp(QObject):
         self._live_job = None
         self._menu_actions["live"].setChecked(on)
         self._update_tray()
+        self._sync_escape()
 
     def _live_busy(self) -> bool:
         # lượt live bị lượt bấm tay mới hơn thay thế thì luồng phụ bỏ qua nó: không còn coi là bận
@@ -447,7 +443,7 @@ class TrayApp(QObject):
     # --- kiểu hiện bản dịch ---
 
     def set_display(self, **changes) -> None:
-        """Đổi cài đặt hiển thị từ thanh điều khiển (chỗ hiện, độ trong suốt, chỗ của thanh) và vẽ lại ngay."""
+        """Đổi cài đặt hiển thị từ thanh điều khiển (độ trong suốt, chỗ của thanh) và vẽ lại ngay."""
         self.config = replace(self.config, **changes)
         self.overlay.set_appearance(Appearance.from_config(self.config))
         if self.overlay.isVisible() and self.shown_items:
@@ -462,6 +458,28 @@ class TrayApp(QObject):
             self.overlay.hide()
         elif self.overlay.has_text():
             self.overlay.show()
+
+    def dismiss(self) -> None:
+        """Esc: xóa hẳn bản dịch đang hiện; lượt đang dịch dở cũng bỏ, không hiện ra nữa."""
+        self.job = 0
+        self.shown_items = []
+        self.overlay.show_items([])
+        self.hint.hide()
+
+    def _sync_escape(self) -> None:
+        """Giữ Esc khi đang hiện bản dịch chụp một lần; live mode thì Esc vẫn để cho game."""
+        focus = QGuiApplication.focusWindow()  # đang bấm vào cửa sổ của app: Esc đóng cửa sổ đó
+        self.hotkeys.set_escape(
+            self.overlay.isVisible()
+            and not self.live_timer.isActive()
+            and not self.paused
+            and (focus is None or not focus.isVisible())
+        )
+
+    def eventFilter(self, watched, event) -> bool:
+        if watched is self.overlay and event.type() in (QEvent.Type.Show, QEvent.Type.Hide):
+            self._sync_escape()
+        return False
 
     def open_editor(self) -> None:
         self.edit_dialog.set_result(self.last_ja, self.last_en)

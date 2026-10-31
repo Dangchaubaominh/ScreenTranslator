@@ -6,19 +6,10 @@ Luôn trên cùng, kéo đi đâu cũng được (nắm vào chỗ trống trên
 
 from PySide6.QtCore import QPoint, QRect, QSize, Qt, Signal
 from PySide6.QtGui import QColor, QFont, QGuiApplication, QIcon, QPainter, QPixmap
-from PySide6.QtWidgets import (
-    QButtonGroup,
-    QFrame,
-    QHBoxLayout,
-    QLabel,
-    QMenu,
-    QSlider,
-    QToolButton,
-    QWidget,
-)
+from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QMenu, QSlider, QToolButton, QWidget
 
 from .. import win32
-from ..config import HOTKEY_LABELS, OVERLAY_POSITIONS
+from ..config import HOTKEY_LABELS
 
 ICON_FONTS = ["Segoe Fluent Icons", "Segoe MDL2 Assets"]  # Windows 11 / Windows 10
 GLYPHS = {
@@ -42,13 +33,11 @@ BUTTONS = {  # hành động → (chữ trên nút, chú thích khi rê chuột)
     "menu": ("", "Thêm: sửa chữ OCR, tên riêng, cài đặt, hướng dẫn, thoát"),
     "close": ("", "Ẩn thanh này (bấm icon 訳 ở khay hệ thống để hiện lại)"),
 }
-POSITION_LABELS = {"cover": "Đè", "above": "Trên", "below": "Dưới"}
 STYLE = """
 #panel { background: rgba(15, 18, 30, 238); border: 1px solid rgba(255, 255, 255, 40); border-radius: 10px; }
 QToolButton { color: #e2e8f0; background: transparent; border: none; border-radius: 6px; padding: 5px 2px 5px 6px;
               font: 13px "Segoe UI"; }
 QToolButton:hover { background: rgba(255, 255, 255, 26); }
-QToolButton:checked { background: #2563eb; }
 QToolButton#live:checked { background: #16a34a; }
 QToolButton#pause:checked { background: #d97706; }
 QToolButton:disabled { color: #64748b; }
@@ -87,7 +76,6 @@ def _separator() -> QFrame:
 
 class ControlPanel(QWidget):
     triggered = Signal(str)  # hành động: select, screen, repeat, live, toggle, pause, close
-    position_changed = Signal(str)  # "cover" / "above" / "below"
     transparency_changed = Signal(int)  # % trong suốt của nền bản dịch
     moved = Signal(QPoint)  # kéo xong: chỗ mới của thanh
 
@@ -131,14 +119,6 @@ class ControlPanel(QWidget):
         for action in ("live", "pause"):
             self.buttons[action].setCheckable(True)
 
-        self.positions = QButtonGroup(self)
-        for key, label in POSITION_LABELS.items():
-            button = QToolButton(text=label, toolTip=f"Chỗ hiện bản dịch: {OVERLAY_POSITIONS[key]}", checkable=True)
-            button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-            self.positions.addButton(button)
-            button.setProperty("position", key)
-        self.positions.buttonClicked.connect(lambda button: self.position_changed.emit(button.property("position")))
-
         self.transparency = QSlider(Qt.Orientation.Horizontal, toolTip="Độ trong suốt của nền bản dịch")
         self.transparency.setRange(0, 100)
         self.transparency.setSingleStep(5)
@@ -151,10 +131,6 @@ class ControlPanel(QWidget):
 
         for action in ("select", "screen", "repeat", "live"):
             row.addWidget(self.buttons[action])
-        row.addWidget(_separator())
-        row.addWidget(QLabel("Hiện"))
-        for button in self.positions.buttons():
-            row.addWidget(button)
         row.addWidget(_separator())
         row.addWidget(QLabel("Trong suốt"))
         row.addWidget(self.transparency)
@@ -175,15 +151,13 @@ class ControlPanel(QWidget):
             if action in self.buttons:
                 self.buttons[action].setToolTip(f"{BUTTONS[action][1]} ({key})")
 
-    def set_state(self, *, live: bool, paused: bool, position: str, transparency: int) -> None:
+    def set_state(self, *, live: bool, paused: bool, transparency: int) -> None:
         """Cập nhật nút theo trạng thái của app; không phát lại signal."""
         self.buttons["live"].setChecked(live)
         self.buttons["pause"].setChecked(paused)
         self.buttons["pause"].setText("Tiếp tục" if paused else "Tạm dừng")
         for action in ("select", "screen", "repeat", "live", "toggle"):
             self.buttons[action].setEnabled(not paused)
-        for button in self.positions.buttons():
-            button.setChecked(button.property("position") == position)
         self.transparency.blockSignals(True)
         self.transparency.setValue(transparency)
         self.transparency.blockSignals(False)

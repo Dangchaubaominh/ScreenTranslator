@@ -20,6 +20,8 @@ _NAMED_KEYS = {f"f{i}": 0x6F + i for i in range(1, 13)} | {
     "pageup": 0x21,
     "pagedown": 0x22,
 }
+VK_ESCAPE = 0x1B
+ESCAPE_ID = 0x7FFF  # ngoài dải id của phím tắt trong cài đặt (1, 2, …)
 
 
 def parse_hotkey(text: str) -> tuple[int, int]:
@@ -51,7 +53,9 @@ class HotkeyWindow(QWidget):
 
     def set_hotkeys(self, hotkeys: dict[str, str]) -> list[str]:
         """Đăng ký lại toàn bộ phím tắt (hành động → 'Ctrl+Alt+T'). Trả về danh sách lỗi để báo người dùng."""
+        escape = self.has_escape()
         self.clear()
+        self.set_escape(escape)
         errors = []
         for hotkey_id, (action, text) in enumerate(hotkeys.items(), start=1):
             try:
@@ -64,6 +68,22 @@ class HotkeyWindow(QWidget):
             else:
                 errors.append(f"{text}: chương trình khác đang dùng phím tắt này")
         return errors
+
+    def set_escape(self, held: bool) -> None:
+        """Giữ / nhả phím Esc (không phím bổ trợ); bấm thì phát `triggered("escape")`.
+
+        Chỉ giữ lúc cần: đang giữ thì game không nhận được Esc.
+        """
+        if held == self.has_escape():
+            return
+        if not held:
+            win32.unregister_hotkey(self._hwnd, ESCAPE_ID)
+            del self._actions[ESCAPE_ID]
+        elif win32.register_hotkey(self._hwnd, ESCAPE_ID, win32.MOD_NOREPEAT, VK_ESCAPE):
+            self._actions[ESCAPE_ID] = "escape"
+
+    def has_escape(self) -> bool:
+        return ESCAPE_ID in self._actions
 
     def clear(self) -> None:
         for hotkey_id in self._actions:

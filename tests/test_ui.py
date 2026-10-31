@@ -13,7 +13,6 @@ from screen_translator.ui.overlay import (
     MIN_PX,
     Appearance,
     Overlay,
-    fit_beside,
     fit_blocks,
     fit_text,
 )
@@ -125,26 +124,6 @@ def test_see_through_background_outlines_the_text(qapp):
     overlay.hide()
 
 
-def test_translation_beside_the_region_flips_when_there_is_no_room(qapp):
-    screen = QRect(0, 0, 1920, 1080)
-    dialogue = QRect(100, 700, 1200, 200)
-    below = fit_beside(dialogue, "Good morning.", "below", 30, screen).rect
-    above = fit_beside(dialogue, "Good morning.", "above", 30, screen).rect
-    assert (below.x(), below.width(), below.top()) == (100, 1200, dialogue.bottom() + 1 + GAP)
-    assert (above.x(), above.width(), above.bottom()) == (100, 1200, dialogue.top() - GAP - 1)
-    # khung thoại sát đáy màn hình: không còn chỗ bên dưới thì đặt lên trên
-    low = QRect(100, 880, 1200, 200)
-    assert fit_beside(low, "Good morning.", "below", 30, screen).rect.bottom() == low.top() - GAP - 1
-    assert fit_beside(QRect(0, 0, 500, 80), "Hi.", "above", 30, screen).rect.top() == 80 + GAP
-
-
-def test_overlay_can_show_text_below_the_region(qapp):
-    overlay = Overlay(Appearance(max_px=20))
-    overlay.show_text(QRect(50, 300, 500, 100), "Hello.", position="below")
-    assert (overlay.geometry().x(), overlay.geometry().y(), overlay.geometry().width()) == (50, 400 + GAP, 500)
-    overlay.hide()
-
-
 def make_selector(qapp):
     screen = qapp.primaryScreen()
     size = screen.geometry().size() * screen.devicePixelRatio()
@@ -216,13 +195,12 @@ def test_settings_saves_valid_hotkeys(qapp):
 
 def test_settings_display_tab(qapp):
     dialog = SettingsDialog(Config(), [], {"start_menu": True, "desktop": False, "autostart": False})
-    dialog._position.setCurrentIndex(dialog._position.findData("below"))
     dialog._font_px.setValue(22)
     dialog._transparency.setValue(40)
-    assert dialog._preview.position == "below" and dialog._preview.appearance.max_px == 22
+    assert dialog._preview.appearance.max_px == 22
     dialog._preview.grab()  # vẽ thử được
     config = dialog.result_config()
-    assert (config.overlay_position, config.overlay_font_px, config.overlay_opacity) == ("below", 22, 60)
+    assert (config.overlay_font_px, config.overlay_opacity) == (22, 60)
     assert dialog.startup.wanted() == {"start_menu": True, "desktop": False, "autostart": False}
     # chưa có screen-translator-gui.exe: không chọn được shortcut
     assert SettingsDialog(Config(), []).startup.wanted() is None
@@ -371,7 +349,7 @@ def test_window_translation_puts_each_block_over_its_own_text(qapp, monkeypatch)
     ]
     assert tray_app._overlay_items(items) == (
         [(QRect(314, 809, 221, 21), "The first morning at the mansion."), (QRect(1472, 805, 40, 16), None)],
-        "blocks",
+        True,
     )
     tray_app.worker.result.emit(1, items, False)
     assert tray_app.overlay.isVisible() and tray_app.overlay.geometry().topLeft() == QPoint(314, 809)
@@ -386,15 +364,56 @@ def selected_region(tray_app):
     return area
 
 
-def test_translation_above_the_region_joins_all_blocks(qapp, monkeypatch):
-    tray_app, _ = make_tray_app(monkeypatch, Config(overlay_position="above"))
+def test_selected_region_with_several_blocks_covers_each_block(qapp, monkeypatch):
+    tray_app, _ = make_tray_app(monkeypatch)
     selected_region(tray_app)
     items = [Item("猫だ。", "A cat.", (0, 0, 200, 40)), Item("犬だ。", "A dog.", (0, 50, 200, 90)), Item("鳥", None)]
-    assert tray_app._overlay_items(items) == ([(QRect(100, 300, 600, 100), "A cat.\nA dog.")], "above")
+    assert tray_app._overlay_items(items) == (
+        [(QRect(100, 300, 200, 40), "A cat."), (QRect(100, 350, 200, 40), "A dog.")],
+        True,
+    )
     tray_app.worker.result.emit(1, items, False)
-    assert tray_app.overlay.geometry().bottom() == 300 - GAP - 1  # ngay trên vùng, không che chữ gốc
+    assert tray_app.overlay.geometry().topLeft() == QPoint(100, 300)
     tray_app.overlay.hide()
     tray_app.hotkeys.clear()
+
+
+def test_escape_clears_a_one_shot_translation_but_stays_with_the_game_in_live_mode(qapp, monkeypatch):
+    monkeypatch.setattr(app_module.win32, "register_hotkey", lambda *args: True)
+    monkeypatch.setattr(app_module.win32, "unregister_hotkey", lambda *args: None)
+    tray_app, _ = make_tray_app(monkeypatch)
+    hotkeys, overlay = tray_app.hotkeys, tray_app.overlay
+    assert not hotkeys.has_escape()  # chưa có bản dịch: Esc vẫn của game
+
+    selected_region(tray_app)  # "Đang dịch…"
+    assert hotkeys.has_escape()
+    hotkeys.triggered.emit("escape")  # bấm Esc lúc đang dịch: bỏ luôn lượt đó
+    assert not overlay.isVisible() and not hotkeys.has_escape()
+    tray_app.worker.result.emit(1, [Item("猫", "Cat", (5, 5, 40, 30))], True)
+    assert not overlay.isVisible()
+
+    selected_region(tray_app)
+    tray_app.worker.result.emit(2, [Item("猫", "Cat", (5, 5, 40, 30))], True)
+    assert overlay.isVisible() and hotkeys.has_escape()
+    tray_app.edit_dialog.show()  # bấm vào cửa sổ của app: Esc đóng cửa sổ đó, không xóa bản dịch
+    tray_app.edit_dialog.activateWindow()
+    wait_until(qapp, lambda: not hotkeys.has_escape())
+    tray_app.edit_dialog.hide()
+    qapp.focusWindowChanged.emit(None)  # Windows trả focus về game
+    assert hotkeys.has_escape()
+    hotkeys.triggered.emit("escape")
+    tray_app.toggle_overlay()  # đã xóa hẳn: nút ẩn / hiện không gọi lại được
+    assert not overlay.isVisible() and not overlay.has_text()
+
+    selected_region(tray_app)
+    overlay.excluded_from_capture = True
+    tray_app.toggle_live()
+    assert overlay.isVisible() and not hotkeys.has_escape()  # live mode: Esc để cho game
+    tray_app.toggle_live()
+    assert hotkeys.has_escape()
+    overlay.hide()
+    tray_app.hint.hide()
+    hotkeys.clear()
 
 
 def test_tray_icon_and_waiting_text_show_loading(qapp, monkeypatch):
@@ -518,11 +537,8 @@ def test_control_panel_does_everything_by_mouse(qapp, monkeypatch):
     assert panel.isVisible() and panel.pos() == QPoint(40, 50) and tray_app._panel_action.isChecked()
     panel.grab()  # vẽ thử được
 
-    [above] = [button for button in panel.positions.buttons() if button.property("position") == "above"]
-    above.click()
     panel.transparency.setValue(70)
     panel.moved.emit(QPoint(60, 80))
-    assert tray_app.config.overlay_position == "above" and above.isChecked()
     assert tray_app.config.overlay_opacity == 30 and panel.transparency_value.text() == "70%"
     assert round(tray_app.overlay.appearance.background.alphaF(), 2) == 0.3
     assert tray_app.config.panel_pos == (60, 80)

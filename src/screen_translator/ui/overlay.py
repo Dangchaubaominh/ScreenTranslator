@@ -1,7 +1,6 @@
 """Overlay vẽ bản dịch đè lên chữ gốc: trong suốt, luôn trên cùng, click xuyên qua, không lọt vào ảnh chụp.
 
 Một overlay vẽ được nhiều khối (dịch cả cửa sổ game: mỗi dòng / đoạn chữ một khối, như Google Lens).
-Bản dịch của vùng đã chọn cũng có thể đặt ngay trên / dưới vùng đó để chữ Nhật gốc vẫn thấy.
 """
 
 from functools import lru_cache
@@ -19,7 +18,7 @@ MIN_PX, MAX_PX = 12, 34
 TINY_PX = 10  # dịch cả cửa sổ: cỡ chữ nhỏ nhất khi đã hết chỗ trống để nới khung
 LINE_HEIGHT = 1.35  # chiều cao một dòng chữ Segoe UI / cỡ chữ
 HINT_PX, HINT_WIDTH = 15, 480  # thông báo ngắn tự tắt
-GAP = 6  # khoảng hở giữa vùng đã chọn và bản dịch đặt bên trên / dưới nó
+GAP = 6  # khoảng hở giữa vùng đang dịch và thông báo ngắn đặt ngay trên nó
 BLOCK_GAP = 2  # khoảng hở giữa các khung bản dịch khi dịch cả cửa sổ
 FONT_FAMILY = "Segoe UI"
 TEXT_FLAGS = Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter | Qt.TextFlag.TextWordWrap
@@ -175,19 +174,6 @@ def clamp(rect: QRect, bounds: QRect) -> QRect:
     return QRect(x, y, rect.width(), rect.height())
 
 
-def fit_beside(rect: QRect, text: str, position: str, max_px: int, bounds: QRect) -> Fitted:
-    """Khung rộng bằng `rect`, cao vừa đủ cho chữ cỡ `max_px`, đặt ngay trên ("above") / dưới ("below") `rect`.
-
-    Phía đó hết chỗ trong `bounds` thì đặt sang phía bên kia.
-    """
-    height = _measure(max_px, rect.width() - 2 * PADDING, text)[1] + 2 * PADDING
-    above = QRect(rect.x(), rect.top() - GAP - height, rect.width(), height)
-    below = QRect(rect.x(), rect.bottom() + 1 + GAP, rect.width(), height)
-    first, second = (above, below) if position == "above" else (below, above)
-    box = first if bounds.contains(first) or not bounds.contains(second) else second
-    return Fitted(_font(max_px), clamp(box, bounds), PADDING, PADDING)
-
-
 def hint_size(text: str) -> QSize:
     """Khung vừa khít một thông báo ngắn chữ cỡ HINT_PX, rộng tối đa HINT_WIDTH."""
     w, h = _measure(HINT_PX, HINT_WIDTH - 2 * PADDING, text)
@@ -242,30 +228,20 @@ class Overlay(QWidget):
         items: list[tuple[QRect, str | None]],
         *,
         dim: bool = False,
-        position: str = "cover",
+        blocks: bool = False,
         bounds: QRect | None = None,
     ) -> None:
-        """Hiện từng `(khung tọa độ logic, chữ)`. dim=True: chữ xám, dùng cho trạng thái chờ / lỗi.
+        """Hiện từng `(khung tọa độ logic, chữ)` đè lên khung đó. dim=True: chữ xám, dùng cho trạng thái chờ / lỗi.
 
-        position: "cover" đè lên khung; "above" / "below" đặt ngay trên / dưới khung; "blocks" mỗi khối chữ
-        của cả cửa sổ một khung, không khung nào đè lên khung khác, không ra ngoài `bounds`
-        (chữ None: khối còn đang dịch, chỉ giữ chỗ).
+        blocks=True: mỗi khối chữ của cả cửa sổ một khung, không khung nào đè lên khung khác, không ra ngoài
+        `bounds` (chữ None: khối còn đang dịch, chỉ giữ chỗ).
         """
         max_px = self.appearance.max_px
-        if position == "blocks":
+        if blocks:
             bounds = bounds or (_screen_bounds(items[0][0]) if items else QRect())
             fitted = [(f, text) for f, (_, text) in zip(fit_blocks(items, max_px, bounds), items, strict=True) if f]
         else:
-            fitted = [
-                (
-                    fit_text(rect, text, max_px)
-                    if position == "cover"
-                    else fit_beside(rect, text, position, max_px, _screen_bounds(rect)),
-                    text,
-                )
-                for rect, text in items
-                if text is not None
-            ]
+            fitted = [(fit_text(rect, text, max_px), text) for rect, text in items if text is not None]
         self._dim = dim
         if not fitted:
             self._items = []
@@ -279,8 +255,8 @@ class Overlay(QWidget):
         self.show()
         self.update()
 
-    def show_text(self, rect: QRect, text: str, *, dim: bool = False, position: str = "cover") -> None:
-        self.show_items([(rect, text)], dim=dim, position=position)
+    def show_text(self, rect: QRect, text: str, *, dim: bool = False) -> None:
+        self.show_items([(rect, text)], dim=dim)
 
     def has_text(self) -> bool:
         return bool(self._items)
