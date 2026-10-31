@@ -3,7 +3,7 @@ import itertools
 import numpy as np
 from PIL import Image
 
-from screen_translator.live import RECHECK_S, SETTLE_S, ChangeWatcher, thumbnail
+from screen_translator.live import MAX_WAIT_S, RECHECK_S, SETTLE_S, ChangeWatcher, PageWatcher, thumbnail
 
 BOX = np.zeros((50, 300), dtype=np.int16)  # hộp thoại 1200×200 thu nhỏ 4 lần
 
@@ -91,3 +91,55 @@ def test_settle_time_is_measured_from_the_last_change():
     assert watcher.update(frame(2), SETTLE_S - 0.1) is None
     assert watcher.update(frame(2), SETTLE_S + 0.05) is None  # mới đứng yên 0,15 s
     assert watcher.update(frame(2), 2 * SETTLE_S) == "settled"
+
+
+# --- live mode cả cửa sổ: trang manga trên web ---
+
+TEXTURE = np.random.default_rng(0).integers(0, 2, (500, 300), dtype=np.int16) * 255  # nét vẽ, chữ của trang
+BUBBLE = (400, 200, 480, 440)  # khung bản dịch đang hiện (pixel ảnh chụp) = (100, 50, 120, 110) khi thu nhỏ
+
+
+def page(scroll: int = 0, ad: int = 0) -> np.ndarray:
+    """Cửa sổ trình duyệt 1920×1080 thu nhỏ: trang manga cuộn `scroll` px (ảnh thu nhỏ), quảng cáo bên phải."""
+    f = np.zeros((270, 480), dtype=np.int16)
+    f[30:250, 50:350] = TEXTURE[scroll : scroll + 220]
+    f[20:80, 400:470] = ad  # quảng cáo 280×240 px, 3,2% cửa sổ
+    return f
+
+
+def test_page_is_read_once_it_stands_still():
+    assert play(PageWatcher(), [page()] * 8) == [(0.5, "settled")]
+
+
+def test_scrolling_hides_the_translation_at_once_and_reads_the_page_again_when_it_stops():
+    watcher = PageWatcher()
+    assert play(watcher, [page()] * 3) == [(0.5, "settled")]
+    watcher.shown([BUBBLE])
+    scrolling = [page(5), page(10), page(15)] + [page(15)] * 3
+    assert play(watcher, scrolling) == [(0.0, "moved"), (1.0, "settled")]
+
+
+def test_animated_ad_elsewhere_does_not_disturb_the_translation():
+    watcher = PageWatcher()
+    play(watcher, [page()] * 3)
+    watcher.shown([BUBBLE])
+    assert play(watcher, [page(ad=255 * (i % 2)) for i in range(12)]) == []
+    # chưa có bản dịch nào (trang không có chữ): quảng cáo cũng không làm đọc lại; cuộn trang thì có
+    watcher = PageWatcher()
+    play(watcher, [page()] * 3)
+    assert play(watcher, [page(ad=255 * (i % 2)) for i in range(4)] + [page(5)]) == [(1.0, "moved")]
+
+
+def test_page_that_never_stands_still_is_read_after_a_while():
+    watcher = PageWatcher()
+    play(watcher, [page()] * 3)
+    watcher.shown([BUBBLE])
+    video = [page(5, ad=255 * (i % 2)) for i in range(12)]  # cuộn xong nhưng video quảng cáo chạy mãi
+    assert play(watcher, video) == [(0.0, "moved"), (MAX_WAIT_S, "settled")]
+
+
+def test_resized_window_counts_as_moved():
+    watcher = PageWatcher()
+    play(watcher, [page()] * 3)
+    watcher.shown([BUBBLE])
+    assert watcher.update(page()[:200], 200.0) == "moved"

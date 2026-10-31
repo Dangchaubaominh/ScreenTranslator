@@ -7,6 +7,8 @@ Mỗi lần chụp chỉ so ảnh thu nhỏ (đo được: chụp ~14 ms + so 0,
 - hình đổi mãi kiểu khác (nền động) → cứ RECHECK_S lại "moving": đọc thử, luồng phụ chỉ dịch khi hai lần đọc
   liền ra cùng một chữ.
 Khung hình đã đọc rồi thì không đọc lại.
+
+Live mode cả cửa sổ (trang manga trên web) theo dõi kiểu khác, xem PageWatcher.
 """
 
 import numpy as np
@@ -18,6 +20,12 @@ RECHECK_S = 0.8
 SCALE = 4  # thu nhỏ mỗi chiều trước khi so: nhanh, và bỏ qua lệch lẻ tẻ từng pixel
 NOISE = 24  # độ sáng (0–255) chênh ít hơn mức này coi như không đổi
 MEMORY = 8  # số khung hình đã đọc được nhớ
+# trang manga: tỉ lệ điểm ảnh đổi (đo trên trang giả lập: cuộn 20 px đổi 6–14% cả cửa sổ, quảng cáo 300×250 đổi
+# màu 3,7%, nút hiện khi rê chuột 0,1%)
+BOX_MOVED = 0.1  # chữ dưới một khung bản dịch đổi chừng này: trang đã dời, bản dịch lệch chỗ
+PAGE_MOVED = 0.05  # chưa có khung bản dịch nào: cả cửa sổ đổi chừng này mới coi là đã cuộn / lật trang
+STILL = 0.02  # hai lần chụp liền nhau đổi ít hơn chừng này: trang đã đứng yên
+MAX_WAIT_S = 2.0  # trang không đứng yên hẳn (video quảng cáo…) thì cũng đọc lại sau chừng này
 
 
 def thumbnail(image: Image.Image) -> np.ndarray:
@@ -83,3 +91,53 @@ class ChangeWatcher:
     def forget(self) -> None:
         """Bản dịch vừa đổi sang câu mới: quên các khung đã đọc, để câu cũ lặp lại (vd. 「うん」) vẫn được dịch lại."""
         self._read, self._glanced = [], []
+
+
+def _changed(a: np.ndarray, b: np.ndarray) -> np.ndarray:
+    """Điểm ảnh nào đổi (mảng True / False); khác cỡ (cửa sổ đổi kích thước) thì coi như đổi hết."""
+    return np.abs(a - b) > NOISE if a.shape == b.shape else np.ones(a.shape, dtype=bool)
+
+
+class PageWatcher:
+    """Live mode cả cửa sổ: cuộn, lật trang thì báo "moved" để ẩn ngay bản dịch đã lệch chỗ; trang đứng yên lại thì
+    "settled": đọc lại cả trang (bóng thoại đã dịch lấy từ cache nên hiện lại ngay).
+
+    Trang đã dời khi chữ dưới các khung bản dịch đang hiện đổi khác, nên quảng cáo động hay nút hiện lên khi rê
+    chuột ở chỗ khác không làm bản dịch nhấp nháy. Chưa có khung nào thì xét cả cửa sổ.
+    """
+
+    def __init__(self):
+        self._anchor: np.ndarray | None = None  # khung hình lúc đọc trang gần nhất
+        self._last: np.ndarray | None = None
+        self._boxes: list[tuple[int, int, int, int]] = []  # khung bản dịch đang hiện, tính trong ảnh thu nhỏ
+        self._moving = True  # vừa bật: đọc trang ngay khi đứng yên
+        self._moving_since = self._still_since = 0.0
+
+    def shown(self, boxes: list[tuple[int, int, int, int]]) -> None:
+        """Bản dịch vừa hiện ở các khung này (pixel trong ảnh chụp)."""
+        self._boxes = [tuple(v // SCALE for v in box) for box in boxes]
+
+    def _moved(self, frame: np.ndarray) -> bool:
+        changed = _changed(frame, self._anchor)
+        if not self._boxes:
+            return changed.mean() > PAGE_MOVED
+        regions = (changed[top:bottom, left:right] for left, top, right, bottom in self._boxes)
+        return any(region.size and region.mean() > BOX_MOVED for region in regions)
+
+    def update(self, frame: np.ndarray, now: float) -> str | None:
+        """Trả về "moved", "settled", hoặc None khi không cần làm gì."""
+        last, self._last = self._last, frame
+        if last is None:  # lần chụp đầu
+            self._moving_since = self._still_since = now
+            return None
+        event = None
+        if not self._moving and self._moved(frame):
+            self._moving, self._moving_since, self._still_since = True, now, now
+            event = "moved"
+        elif self._moving:
+            if _changed(frame, last).mean() > STILL:
+                self._still_since = now
+            if now - self._still_since >= SETTLE_S or now - self._moving_since >= MAX_WAIT_S:
+                self._moving, self._anchor, self._boxes = False, frame, []
+                event = "settled"
+        return event

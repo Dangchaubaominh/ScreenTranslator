@@ -259,6 +259,14 @@ cho gọn; bấm <b>Esc</b> để tắt live mode, thanh hiện lại.</li>
 đồ họa.</li>
 <li>Tên nhân vật bị dịch sai: menu → <i>Tên riêng, thuật ngữ…</i></li>
 </ol>
+<h3>Đọc manga trên web</h3>
+<ol>
+<li>Mở trang manga trong trình duyệt, bấm <b>Cả cửa sổ</b> ({screen}): mỗi bóng thoại (cả chữ dọc) có một
+khung bản dịch.</li>
+<li>Bấm tiếp <b>Live</b> ({live}) để đọc liền một mạch: cuộn hay lật trang thì bản dịch ẩn đi, trang đứng yên là
+tự dịch lại. Bấm <b>Esc</b> để tắt.</li>
+<li>Chữ quá nhỏ đọc sai: phóng to trang (Ctrl +).</li>
+</ol>
 <h3>Phím tắt</h3>
 <table cellspacing="0" cellpadding="3">{rows}</table>
 <p>Cần mở Ollama để dịch. Icon xám: đang nạp model, xanh dương: sẵn sàng, xanh lá: live mode đang bật,

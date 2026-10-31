@@ -42,6 +42,42 @@ def test_latin_words_keep_their_space():
     assert group_lines(lines)[0].text == "Press the Enter key to go on to the next page"
 
 
+# Các cột chữ dọc OneOCR đọc được trên trang manga dựng sẵn (chữ ~20 px), giữ nguyên tọa độ
+
+
+def test_columns_of_a_speech_bubble_are_read_right_to_left():
+    lines = [
+        TextBox("ですか", 1113, 127, 1136, 199),  # cột ngắn canh trên
+        TextBox("無理があるんじゃない", 1139, 127, 1163, 332),
+        TextBox("先生、それはちょっと", 1166, 125, 1191, 335),
+        TextBox("黙って聞け", 763, 145, 788, 254),
+        TextBox("うるさい!", 792, 147, 813, 258),
+    ]
+    assert group_lines(lines) == [
+        TextBox("先生、それはちょっと無理があるんじゃないですか", 1113, 125, 1191, 335, vertical=True),
+        TextBox("うるさい!黙って聞け", 763, 145, 813, 258, vertical=True),
+    ]
+
+
+def test_bubbles_next_to_each_other_stay_separate():
+    lines = [
+        TextBox("えっ…", 1167, 772, 1191, 846),
+        TextBox("本当に?", 1140, 767, 1164, 862),
+        TextBox("かしこまりました", 1093, 760, 1118, 920),  # bóng bên trái: cách xa hơn khoảng giữa hai cột
+        TextBox("お茶とお菓子な", 1140, 900, 1164, 1060),  # bóng bên dưới: không ngang hàng
+    ]
+    assert [b.text for b in group_lines(lines)] == ["えっ…本当に?", "お茶とお菓子な", "かしこまりました"]
+
+
+def test_horizontal_lines_and_vertical_columns_on_one_page():
+    lines = [TextBox("かしこまりました", 799, 468, 825, 630), TextBox("第3話 霊夢の休日", 700, 60, 1000, 84)]
+    assert [(b.text, b.vertical) for b in group_lines(lines)] == [
+        ("第3話 霊夢の休日", False),
+        ("かしこまりました", True),
+    ]
+    assert not group_lines([TextBox("!", 0, 0, 10, 30)])[0].vertical  # một ký tự: không biết là cột hay dòng
+
+
 def test_has_japanese():
     assert has_japanese("ログ▲") and has_japanese("ｽｷｯﾌﾟ") and has_japanese("1日目")
     assert not has_japanese("ver 1.00") and not has_japanese("HP") and not has_japanese("×")

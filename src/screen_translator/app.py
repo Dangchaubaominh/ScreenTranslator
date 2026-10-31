@@ -32,6 +32,13 @@ MIN_WINDOW = 100  # pixel; cửa sổ đang mở nhỏ hơn thế trên màn hì
 ICON_COLOR, LIVE_ICON_COLOR = QColor(59, 130, 246), QColor(22, 163, 74)  # xanh dương; xanh lá khi live mode bật
 LOADING_ICON_COLOR = QColor(128, 136, 150)  # xám: đang nạp OCR / model dịch, hoặc tạm dừng
 PAUSE_BADGE_COLOR = QColor(217, 119, 6)  # chấm cam có hai vạch khi tạm dừng
+BUBBLE_WIDTH = 0.8  # bóng thoại chữ dọc: khung bản dịch rộng ít nhất chừng này lần chiều cao cột chữ
+
+
+def widen_bubble(rect: QRect) -> QRect:
+    """Bóng thoại chữ dọc hẹp và cao; bản dịch chữ ngang cần khung rộng hơn, nới đều hai bên quanh giữa bóng."""
+    width = max(rect.width(), round(rect.height() * BUBBLE_WIDTH))
+    return QRect(rect.x() - (width - rect.width()) // 2, rect.y(), width, rect.height())
 
 
 def make_icon(color: QColor = ICON_COLOR, size: int = 64, *, paused: bool = False) -> QIcon:
@@ -300,9 +307,10 @@ class TrayApp(QObject):
         return capture.grab_region(area)
 
     def _submit_image(self, area: capture.Region, image: Image.Image, *, selection: bool) -> None:
-        if area != self.area:  # live mode theo dõi vùng mới
-            self.watcher = live.ChangeWatcher()
+        new_area = (area, selection) != (self.area, self.area_is_selection)
         self.area, self.area_is_selection = area, selection
+        if new_area:  # live mode theo dõi vùng mới
+            self.watcher = self._new_watcher()
         self.job = self.worker.submit_image(image, dialogue=selection)
         if self.loading:  # lần đầu phải chờ nạp model: nói rõ đang chờ gì
             self._show_status(self.status_text)
@@ -332,7 +340,12 @@ class TrayApp(QObject):
             en = items[0].en
             return ([(QRect(*self.area.to_logical()), en)] if en is not None else []), False
         # mỗi khối chữ một khung; khối chưa dịch xong (en None) vẫn giữ chỗ để khung khác không lấn vào
-        return [(QRect(*self.area.sub(*item.box).to_logical()), item.en) for item in items if item.box], True
+        boxes = []
+        for item in items:
+            if item.box:
+                rect = QRect(*self.area.sub(*item.box).to_logical())
+                boxes.append((widen_bubble(rect) if item.vertical else rect, item.en))
+        return boxes, True
 
     def _show_result(self, items: list[Item]) -> None:
         boxes, blocks = self._overlay_items(items)
@@ -350,7 +363,10 @@ class TrayApp(QObject):
             self._show_result(items)
         if finished and job == self._live_job:
             self._live_job = None
-            self.watcher.forget()
+            if self.area_is_selection:
+                self.watcher.forget()
+            else:  # trang manga: từ giờ chữ dưới các khung này dời đi là trang đã cuộn
+                self.watcher.shown([item.box for item in items if item.box])
         if finished and items:
             self.last_ja = "\n".join(item.ja for item in items)
             self.last_en = "\n".join(item.en for item in items)
@@ -398,10 +414,17 @@ class TrayApp(QObject):
                 "Windows này không cho giấu bản dịch khỏi ảnh chụp, nên không bật được live mode.", warning=True
             )
             return
-        self.watcher = live.ChangeWatcher()
+        self.watcher = self._new_watcher()
         self.worker.reset_live()
         self._set_live(True)
-        self.notify("Đã bật live mode: câu mới trong vùng đã chọn sẽ tự được dịch. Bấm Esc để tắt.")
+        if self.area_is_selection:
+            self.notify("Đã bật live mode: câu mới trong vùng đã chọn sẽ tự được dịch. Bấm Esc để tắt.")
+        else:
+            self.notify("Đã bật live mode cả cửa sổ: cuộn hay lật trang là tự dịch lại. Bấm Esc để tắt.")
+
+    def _new_watcher(self) -> live.ChangeWatcher | live.PageWatcher:
+        """Vùng tự chọn: khung thoại game. Cả cửa sổ: trang manga trên web, cuộn / lật trang."""
+        return live.ChangeWatcher() if self.area_is_selection else live.PageWatcher()
 
     def _set_live(self, on: bool) -> None:
         """Bật live mode thì cất thanh điều khiển đi cho gọn; tắt (Esc) thì thanh hiện lại như trước."""
@@ -425,11 +448,17 @@ class TrayApp(QObject):
         return self._live_job is not None and self._live_job == self.job
 
     def _live_tick(self) -> None:
-        if self.area is None or self._live_busy():
+        page = not self.area_is_selection  # cả cửa sổ: vẫn theo dõi cuộn trang trong lúc đang đọc trang
+        if self.area is None or (self._live_busy() and not page):
             return
         image = capture.grab_region(self.area)
         event = self.watcher.update(live.thumbnail(image), time.monotonic())
-        if event:
+        if event == "moved":  # trang đã cuộn / lật: bản dịch lệch chỗ, bỏ ngay; lượt đang đọc dở cũng bỏ
+            self.job = 0
+            self._show_result([])
+        elif event and page:
+            self.job = self._live_job = self.worker.submit_page(image)
+        elif event:
             self.job = self._live_job = self.worker.submit_live(image, settled=event == "settled")
 
     # --- tạm dừng ---

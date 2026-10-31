@@ -177,6 +177,23 @@ def test_dialogue_is_translated_with_the_turns_before_it(qapp, fake):
     ]
 
 
+def test_page_scan_marks_speech_bubbles_and_an_empty_page_just_clears(qapp, fake):
+    w, events = start(qapp)
+    empty = w.submit_page(screen(VERSION))  # cuộn tới tranh không lời
+    wait_until(qapp, lambda: finished(events))
+    columns = [TextBox("本当に?", 1140, 767, 1164, 862), TextBox("えっ…", 1167, 772, 1191, 846)]
+    page = w.submit_page(screen(*columns))
+    wait_until(qapp, lambda: len(finished(events)) == 2)
+    w.stop()
+    assert finished(events)[0] == (empty, [], True) and events["failed"] == []
+    assert finished(events)[1] == (
+        page,
+        [Item("えっ…本当に?", "“えっ…本当に?” in English", (1140, 767, 1191, 862), True)],
+        True,
+    )
+    assert fake["contexts"][-1] == ("えっ…本当に?", [])  # trang manga: không dính ngữ cảnh khung thoại game
+
+
 def test_one_bad_block_does_not_spoil_the_rest(qapp, fake):
     fake["fail"]["設定"] = ollama.ResponseError("prediction aborted, token repeat limit reached", 500)
     w, events = start(qapp)

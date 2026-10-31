@@ -237,6 +237,10 @@ class FakeWorker(QObject):
         self.jobs.append(("live", settled))
         return len(self.jobs)
 
+    def submit_page(self, image):
+        self.jobs.append("page")
+        return len(self.jobs)
+
     def reset_live(self):
         self.live_resets += 1
 
@@ -287,6 +291,47 @@ class FakeWatcher:
 
     def forget(self):
         self.forgotten += 1
+
+    def shown(self, boxes):
+        self.boxes = boxes
+
+
+def test_live_mode_over_a_whole_window_follows_scrolling(qapp, monkeypatch):
+    tray_app, messages = make_tray_app(monkeypatch)
+    worker, overlay = tray_app.worker, tray_app.overlay
+    monitor = app_module.capture.Monitor(0, 0, 1920, 1080)
+    area = app_module.capture.Region.from_physical(monitor, (0, 0), 1.0, 0, 0, 1920, 1040)
+    tray_app._submit_image(area, Image.new("RGB", (1920, 1040)), selection=False)  # Cả cửa sổ: trang manga
+    overlay.excluded_from_capture = True
+    monkeypatch.setattr(app_module.capture, "grab_region", lambda area: Image.new("RGB", (area.width, area.height)))
+    tray_app.toggle_live()
+    assert isinstance(tray_app.watcher, app_module.live.PageWatcher) and "lật trang" in messages[-1]
+    tray_app.watcher = watcher = FakeWatcher()
+
+    watcher.events = ["settled"]
+    tray_app._live_tick()
+    assert worker.jobs[-1] == "page"
+    scan = tray_app.job
+    bubble = Item("先生、それはちょっと", "Teacher, that's a little far-fetched.", (1113, 125, 1191, 335), True)
+    worker.result.emit(scan, [bubble], True)
+    assert watcher.boxes == [(1113, 125, 1191, 335)] and overlay.isVisible()
+    assert overlay.width() >= 0.8 * 210  # bóng chữ dọc hẹp: khung bản dịch nới ngang ra
+
+    watcher.events = ["settled", "moved"]
+    tray_app._live_tick()  # lượt đọc trang mới đang chạy thì vẫn theo dõi cuộn
+    tray_app._live_tick()  # trang cuộn: bản dịch lệch chỗ, bỏ ngay
+    assert not overlay.isVisible() and not overlay.has_text()
+    worker.result.emit(scan + 1, [bubble], True)  # lượt đọc lúc chưa cuộn xong: không hiện nữa
+    assert not overlay.isVisible()
+    tray_app.toggle_live()
+    tray_app.hotkeys.clear()
+
+
+def test_vertical_bubble_is_widened_around_its_middle():
+    column = QRect(100, 50, 40, 200)
+    wide = app_module.widen_bubble(column)
+    assert wide.width() == 160 and wide.height() == 200 and abs(wide.center().x() - column.center().x()) <= 1
+    assert app_module.widen_bubble(QRect(0, 0, 300, 100)) == QRect(0, 0, 300, 100)  # đã đủ rộng
 
 
 def test_live_mode_needs_a_region_first(qapp, monkeypatch):
