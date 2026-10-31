@@ -3,6 +3,7 @@
 Khác với hook bàn phím (pynput), RegisterHotKey vẫn chạy khi game mở bằng quyền Admin.
 """
 
+import logging
 from ctypes import wintypes
 
 from PySide6.QtCore import Signal
@@ -10,6 +11,7 @@ from PySide6.QtWidgets import QWidget
 
 from . import win32
 
+log = logging.getLogger(__name__)
 _MODIFIERS = {"ctrl": win32.MOD_CONTROL, "alt": win32.MOD_ALT, "shift": win32.MOD_SHIFT, "win": win32.MOD_WIN}
 _NAMED_KEYS = {f"f{i}": 0x6F + i for i in range(1, 13)} | {
     "space": 0x20,
@@ -20,7 +22,6 @@ _NAMED_KEYS = {f"f{i}": 0x6F + i for i in range(1, 13)} | {
     "pageup": 0x21,
     "pagedown": 0x22,
 }
-VK_ESCAPE = 0x1B
 ESCAPE_ID = 0x7FFF  # ngoài dải id của phím tắt trong cài đặt (1, 2, …)
 
 
@@ -79,8 +80,10 @@ class HotkeyWindow(QWidget):
         if not held:
             win32.unregister_hotkey(self._hwnd, ESCAPE_ID)
             del self._actions[ESCAPE_ID]
-        elif win32.register_hotkey(self._hwnd, ESCAPE_ID, win32.MOD_NOREPEAT, VK_ESCAPE):
+        elif win32.register_hotkey(self._hwnd, ESCAPE_ID, win32.MOD_NOREPEAT, win32.VK_ESCAPE):
             self._actions[ESCAPE_ID] = "escape"
+        else:
+            log.warning("Không giữ được phím Esc: chương trình khác đang dùng")
 
     def has_escape(self) -> bool:
         return ESCAPE_ID in self._actions

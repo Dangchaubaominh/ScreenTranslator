@@ -1,8 +1,10 @@
+import os
+
 from conftest import wait_until
 from PIL import Image
 from PySide6.QtCore import QObject, QPoint, QRect, Qt, Signal
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QDialog, QDialogButtonBox, QLineEdit, QSystemTrayIcon
+from PySide6.QtWidgets import QDialog, QDialogButtonBox, QLineEdit, QMenu, QSystemTrayIcon
 
 from screen_translator import app as app_module
 from screen_translator.config import Config
@@ -16,6 +18,7 @@ from screen_translator.ui.overlay import (
     fit_blocks,
     fit_text,
 )
+from screen_translator.ui.panel import ControlPanel
 from screen_translator.ui.region_selector import RegionSelector
 from screen_translator.worker import READY, Item
 
@@ -378,40 +381,55 @@ def test_selected_region_with_several_blocks_covers_each_block(qapp, monkeypatch
     tray_app.hotkeys.clear()
 
 
-def test_escape_clears_a_one_shot_translation_but_stays_with_the_game_in_live_mode(qapp, monkeypatch):
+def test_escape_clears_the_translation_and_turns_live_mode_off(qapp, monkeypatch):
     monkeypatch.setattr(app_module.win32, "register_hotkey", lambda *args: True)
     monkeypatch.setattr(app_module.win32, "unregister_hotkey", lambda *args: None)
+    keyboard = {"esc_down": False, "foreground_pid": 0}  # 0: game (chương trình khác) đang được focus
+    monkeypatch.setattr(app_module.win32, "key_down", lambda vk: keyboard["esc_down"])
+    monkeypatch.setattr(app_module.win32, "window_process_id", lambda hwnd: keyboard["foreground_pid"])
     tray_app, _ = make_tray_app(monkeypatch)
-    hotkeys, overlay = tray_app.hotkeys, tray_app.overlay
-    assert not hotkeys.has_escape()  # chưa có bản dịch: Esc vẫn của game
+    hotkeys, overlay, watching = tray_app.hotkeys, tray_app.overlay, tray_app.escape_timer
+    assert not hotkeys.has_escape() and not watching.isActive()  # chưa có bản dịch: Esc vẫn của game
 
     selected_region(tray_app)  # "Đang dịch…"
-    assert hotkeys.has_escape()
+    assert hotkeys.has_escape() and watching.isActive()
     hotkeys.triggered.emit("escape")  # bấm Esc lúc đang dịch: bỏ luôn lượt đó
-    assert not overlay.isVisible() and not hotkeys.has_escape()
+    assert not overlay.isVisible() and not hotkeys.has_escape() and not watching.isActive()
     tray_app.worker.result.emit(1, [Item("猫", "Cat", (5, 5, 40, 30))], True)
     assert not overlay.isVisible()
 
     selected_region(tray_app)
     tray_app.worker.result.emit(2, [Item("猫", "Cat", (5, 5, 40, 30))], True)
-    assert overlay.isVisible() and hotkeys.has_escape()
-    tray_app.edit_dialog.show()  # bấm vào cửa sổ của app: Esc đóng cửa sổ đó, không xóa bản dịch
-    tray_app.edit_dialog.activateWindow()
-    wait_until(qapp, lambda: not hotkeys.has_escape())
-    tray_app.edit_dialog.hide()
-    qapp.focusWindowChanged.emit(None)  # Windows trả focus về game
+    # đang dùng cửa sổ của app (chọn vùng, hộp thoại): Esc đóng cửa sổ đó, không xóa bản dịch
+    keyboard.update(esc_down=True, foreground_pid=os.getpid())
+    tray_app._watch_escape()
+    assert overlay.isVisible() and not hotkeys.has_escape()
+    keyboard.update(esc_down=False, foreground_pid=0)
+    tray_app._watch_escape()
     assert hotkeys.has_escape()
-    hotkeys.triggered.emit("escape")
+    keyboard["esc_down"] = True  # game chặn phím tắt toàn cục: vẫn thấy Esc qua trạng thái phím
+    tray_app._watch_escape()
     tray_app.toggle_overlay()  # đã xóa hẳn: nút ẩn / hiện không gọi lại được
     assert not overlay.isVisible() and not overlay.has_text()
+    keyboard["esc_down"] = False
 
     selected_region(tray_app)
+    job = tray_app.job  # câu mới vừa hiện trong game, đang dịch
     overlay.excluded_from_capture = True
     tray_app.toggle_live()
-    assert overlay.isVisible() and not hotkeys.has_escape()  # live mode: Esc để cho game
-    tray_app.toggle_live()
-    assert hotkeys.has_escape()
-    overlay.hide()
+    assert overlay.isVisible() and hotkeys.has_escape() and watching.isActive()
+    hotkeys.triggered.emit("escape")  # live mode: Esc tắt live mode, xóa luôn bản dịch
+    assert not tray_app.live_timer.isActive() and not tray_app._menu_actions["live"].isChecked()
+    assert not overlay.isVisible() and not hotkeys.has_escape() and not watching.isActive()
+    tray_app.worker.result.emit(job, [Item("犬", "Dog", (5, 5, 40, 30))], True)  # lượt đang dịch dở không hiện nữa
+    assert not overlay.isVisible()
+
+    tray_app.toggle_live()  # chưa có bản dịch nào trên màn hình: Esc vẫn tắt được live mode
+    assert not overlay.isVisible() and hotkeys.has_escape() and watching.isActive()
+    keyboard["esc_down"] = True  # cả lúc game chặn phím tắt toàn cục
+    tray_app._watch_escape()
+    assert not tray_app.live_timer.isActive() and not hotkeys.has_escape() and not watching.isActive()
+    keyboard["esc_down"] = False
     tray_app.hint.hide()
     hotkeys.clear()
 
@@ -502,25 +520,51 @@ def test_pause_gives_hotkeys_back_and_resume_restores_live_mode(qapp, monkeypatc
     tray_app.overlay.excluded_from_capture = True
     tray_app.toggle_live()
 
-    panel.buttons["pause"].click()
-    assert tray_app.paused and worker.paused == [True]
+    tray_app._pause_action.trigger()  # tạm dừng từ menu (nút "…" trên thanh, hoặc icon ở khay)
+    assert tray_app.paused and worker.paused == [True] and tray_app._pause_action.isChecked()
     assert not tray_app.live_timer.isActive() and not tray_app.overlay.isVisible()
     assert tray_app.hotkeys._actions == {}  # game dùng lại được các phím này
     assert "tạm dừng" in tray_app.tray.toolTip() and "Đã tạm dừng" in messages[-1]
-    assert panel.buttons["pause"].isChecked() and panel.buttons["pause"].text() == "Tiếp tục"
     assert not panel.buttons["select"].isEnabled() and not tray_app._menu_actions["select"].isEnabled()
     worker.result.emit(1, [Item("猫", "Cat", (5, 5, 40, 30))], True)  # lượt đang dịch dở lúc bấm dừng
     assert not tray_app.overlay.isVisible()
 
     tray_app._pause_action.trigger()  # tiếp tục từ menu
     assert not tray_app.paused and worker.paused == [True, False]
-    assert len(tray_app.hotkeys._actions) == len(tray_app.config.hotkeys)
     assert tray_app.live_timer.isActive() and worker.live_resets == 2  # lúc dừng đang bật live mode
-    assert panel.buttons["select"].isEnabled() and not panel.buttons["pause"].isChecked()
+    assert len(tray_app.hotkeys._actions) == len(tray_app.config.hotkeys) + 1  # + Esc tắt live mode
+    assert panel.buttons["select"].isEnabled() and not tray_app._pause_action.isChecked()
     tray_app.toggle_live()
     tray_app.overlay.hide()
     tray_app.hint.hide()
     tray_app.hotkeys.clear()
+
+
+def test_live_mode_puts_the_control_panel_away_until_esc(qapp, monkeypatch):
+    monkeypatch.setattr(app_module.win32, "register_hotkey", lambda *args: True)
+    monkeypatch.setattr(app_module.win32, "unregister_hotkey", lambda *args: None)
+    tray_app, messages = make_tray_app(monkeypatch, Config(panel_pos=(40, 50)))
+    panel, hotkeys = tray_app.panel, tray_app.hotkeys
+    assert "pause" not in panel.buttons  # tạm dừng chỉ còn trong menu
+    tray_app.set_panel_visible(True)
+    selected_region(tray_app)
+    tray_app.overlay.excluded_from_capture = True
+
+    panel.buttons["live"].click()
+    assert tray_app.live_timer.isActive() and not panel.isVisible() and not tray_app._panel_action.isChecked()
+    assert tray_app.config.show_panel and "Esc" in messages[-1]  # chỉ cất tạm: mở app lại thanh vẫn hiện
+    hotkeys.triggered.emit("escape")
+    assert not tray_app.live_timer.isActive() and panel.isVisible() and panel.pos() == QPoint(40, 50)
+    assert tray_app._panel_action.isChecked()
+
+    tray_app.toggle_live()
+    tray_app._on_tray_activated(QSystemTrayIcon.ActivationReason.Trigger)  # lúc live vẫn mở thanh ra được
+    assert panel.isVisible()
+    panel.buttons["close"].click()  # rồi tự ẩn thanh: tắt live mode xong thanh không hiện lại
+    hotkeys.triggered.emit("escape")
+    assert not tray_app.live_timer.isActive() and not panel.isVisible() and not tray_app.config.show_panel
+    tray_app.overlay.hide()
+    hotkeys.clear()
 
 
 def test_control_panel_does_everything_by_mouse(qapp, monkeypatch):
@@ -538,12 +582,20 @@ def test_control_panel_does_everything_by_mouse(qapp, monkeypatch):
     panel.grab()  # vẽ thử được
 
     panel.transparency.setValue(70)
-    panel.moved.emit(QPoint(60, 80))
+    panel.move(60, 80)  # kéo thanh
+    panel.moved.emit(panel.pos())
     assert tray_app.config.overlay_opacity == 30 and panel.transparency_value.text() == "70%"
     assert round(tray_app.overlay.appearance.background.alphaF(), 2) == 0.3
     assert tray_app.config.panel_pos == (60, 80)
     wait_until(qapp, lambda: saved)  # kéo xong mới lưu, một lần
     assert saved == [tray_app.config]
+
+    panel.buttons["orient"].click()  # xếp thành cột dọc, góc trên-trái giữ chỗ cũ
+    assert panel.vertical and tray_app.config.panel_vertical and panel.height() > panel.width()
+    assert panel.pos() == QPoint(60, 80) and panel.buttons["select"].isVisible()
+    panel.buttons["orient"].click()
+    assert not panel.vertical and not tray_app.config.panel_vertical and panel.width() > panel.height()
+    assert ControlPanel(QMenu(), vertical=True).vertical  # mở app lại vẫn xếp như lần trước
 
     panel.buttons["close"].click()
     assert not panel.isVisible() and not tray_app.config.show_panel and not tray_app._panel_action.isChecked()

@@ -6,7 +6,17 @@ Luôn trên cùng, kéo đi đâu cũng được (nắm vào chỗ trống trên
 
 from PySide6.QtCore import QPoint, QRect, QSize, Qt, Signal
 from PySide6.QtGui import QColor, QFont, QGuiApplication, QIcon, QPainter, QPixmap
-from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QMenu, QSlider, QToolButton, QWidget
+from PySide6.QtWidgets import (
+    QBoxLayout,
+    QFrame,
+    QHBoxLayout,
+    QLabel,
+    QMenu,
+    QSlider,
+    QToolButton,
+    QVBoxLayout,
+    QWidget,
+)
 
 from .. import win32
 from ..config import HOTKEY_LABELS
@@ -19,7 +29,6 @@ GLYPHS = {
     "repeat": "",
     "live": "",
     "toggle": "",
-    "pause": "",
     "menu": "",
     "close": "",
 }
@@ -29,17 +38,17 @@ BUTTONS = {  # hành động → (chữ trên nút, chú thích khi rê chuột)
     "repeat": ("Dịch lại", HOTKEY_LABELS["repeat"]),
     "live": ("Live", HOTKEY_LABELS["live"]),
     "toggle": ("", HOTKEY_LABELS["toggle"]),
-    "pause": ("Tạm dừng", "Tạm dừng: tắt live mode, ẩn bản dịch, trả phím tắt cho game, gỡ model dịch khỏi VRAM"),
-    "menu": ("", "Thêm: sửa chữ OCR, tên riêng, cài đặt, hướng dẫn, thoát"),
+    "menu": ("", "Thêm: tạm dừng, sửa chữ OCR, tên riêng, cài đặt, hướng dẫn, thoát"),
+    "orient": ("", ""),  # chú thích theo chiều đang xếp, xem set_vertical
     "close": ("", "Ẩn thanh này (bấm icon 訳 ở khay hệ thống để hiện lại)"),
 }
+ORIENT_GLYPHS = {False: "", True: ""}  # đang ngang: nút "xếp dọc" (DockLeft); đang dọc: DockBottom
 STYLE = """
 #panel { background: rgba(15, 18, 30, 238); border: 1px solid rgba(255, 255, 255, 40); border-radius: 10px; }
 QToolButton { color: #e2e8f0; background: transparent; border: none; border-radius: 6px; padding: 5px 2px 5px 6px;
               font: 13px "Segoe UI"; }
 QToolButton:hover { background: rgba(255, 255, 255, 26); }
 QToolButton#live:checked { background: #16a34a; }
-QToolButton#pause:checked { background: #d97706; }
 QToolButton:disabled { color: #64748b; }
 QToolButton::menu-indicator { image: none; }
 QLabel { color: #94a3b8; font: 12px "Segoe UI"; padding: 0 3px; }
@@ -68,18 +77,31 @@ def glyph_icon(glyph: str, size: int = 16, color: QColor | None = None) -> QIcon
     return QIcon(pixmap)
 
 
-def _separator() -> QFrame:
+def _separator(vertical: bool) -> QFrame:
+    """Vạch ngăn nhóm nút: đứng khi thanh nằm ngang, nằm khi thanh dọc."""
     line = QFrame(objectName="separator")
-    line.setFixedSize(1, 22)
+    if vertical:
+        line.setFixedHeight(1)
+    else:
+        line.setFixedSize(1, 22)
     return line
 
 
+def _row(widgets: list[QWidget]) -> QHBoxLayout:
+    row = QHBoxLayout()
+    row.setSpacing(2)
+    for widget in widgets:
+        row.addWidget(widget)
+    row.addStretch()
+    return row
+
+
 class ControlPanel(QWidget):
-    triggered = Signal(str)  # hành động: select, screen, repeat, live, toggle, pause, close
+    triggered = Signal(str)  # hành động: select, screen, repeat, live, toggle, orient, close
     transparency_changed = Signal(int)  # % trong suốt của nền bản dịch
     moved = Signal(QPoint)  # kéo xong: chỗ mới của thanh
 
-    def __init__(self, menu: QMenu):
+    def __init__(self, menu: QMenu, *, vertical: bool = False):
         super().__init__(
             None,
             Qt.WindowType.FramelessWindowHint
@@ -92,20 +114,18 @@ class ControlPanel(QWidget):
         self.setStyleSheet(STYLE)
         self._drag_from: QPoint | None = None
 
-        frame = QFrame(self, objectName="panel")
-        row = QHBoxLayout(frame)
-        row.setContentsMargins(6, 4, 6, 4)
-        row.setSpacing(2)
-        grip = QLabel(toolTip="Kéo để dời thanh")
-        grip.setPixmap(glyph_icon(GLYPHS["grip"], 14, QColor(100, 116, 139)).pixmap(14, 14))
+        self._frame = QFrame(self, objectName="panel")
+        QVBoxLayout(self._frame).setContentsMargins(0, 0, 0, 0)
+        self._body: QWidget | None = None  # chứa các nút; xoay thanh thì xếp lại vào một body mới
+        self._grip = QLabel(toolTip="Kéo để dời thanh")
+        self._grip.setPixmap(glyph_icon(GLYPHS["grip"], 14, QColor(100, 116, 139)).pixmap(14, 14))
         self.status = QLabel()  # icon 訳 tô màu theo trạng thái, giống icon ở khay
-        row.addWidget(grip)
-        row.addWidget(self.status)
 
         self.buttons: dict[str, QToolButton] = {}
         for action, (text, tip) in BUTTONS.items():
             button = QToolButton(objectName=action, text=text, toolTip=tip)
-            button.setIcon(glyph_icon(GLYPHS[action]))
+            if action in GLYPHS:
+                button.setIcon(glyph_icon(GLYPHS[action]))
             button.setIconSize(QSize(16, 16))
             style = Qt.ToolButtonStyle.ToolButtonTextBesideIcon if text else Qt.ToolButtonStyle.ToolButtonIconOnly
             button.setToolButtonStyle(style)
@@ -116,8 +136,7 @@ class ControlPanel(QWidget):
             else:
                 button.clicked.connect(lambda *_, action=action: self.triggered.emit(action))
             self.buttons[action] = button
-        for action in ("live", "pause"):
-            self.buttons[action].setCheckable(True)
+        self.buttons["live"].setCheckable(True)
 
         self.transparency = QSlider(Qt.Orientation.Horizontal, toolTip="Độ trong suốt của nền bản dịch")
         self.transparency.setRange(0, 100)
@@ -128,23 +147,58 @@ class ControlPanel(QWidget):
         self.transparency_value = QLabel()
         self.transparency_value.setFixedWidth(40)  # vừa "100%"
         self.transparency.valueChanged.connect(self._on_transparency)
+        self._transparency_label = QLabel("Trong suốt")
 
-        for action in ("select", "screen", "repeat", "live"):
-            row.addWidget(self.buttons[action])
-        row.addWidget(_separator())
-        row.addWidget(QLabel("Trong suốt"))
-        row.addWidget(self.transparency)
-        row.addWidget(self.transparency_value)
-        row.addWidget(_separator())
-        for action in ("toggle", "pause", "menu", "close"):
-            row.addWidget(self.buttons[action])
         outer = QHBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
-        outer.addWidget(frame)
-        # "Tạm dừng" ↔ "Tiếp tục": giữ nguyên bề rộng nút để các nút khác không xê dịch
-        self.buttons["pause"].setFixedWidth(self.buttons["pause"].sizeHint().width())
-        self.adjustSize()
+        outer.addWidget(self._frame)
+        self.set_vertical(vertical)
         self.excluded_from_capture = win32.exclude_from_capture(int(self.winId()))
+
+    def set_vertical(self, vertical: bool) -> None:
+        """Xếp các nút thành một hàng ngang (để ở mép trên màn hình) hay một cột dọc (mép trái / phải)."""
+        self.vertical = vertical
+        body = QWidget(self._frame)
+        direction = QBoxLayout.Direction.TopToBottom if vertical else QBoxLayout.Direction.LeftToRight
+        layout = QBoxLayout(direction, body)
+        layout.setContentsMargins(*((5, 6, 5, 6) if vertical else (6, 4, 6, 4)))
+        layout.setSpacing(2)
+        actions = [self.buttons[action] for action in ("select", "screen", "repeat", "live")]
+        transparency = [self._transparency_label, self.transparency, self.transparency_value]
+        if vertical:
+            layout.addLayout(_row([self._grip, self.status]))
+            for button in actions:
+                layout.addWidget(button, alignment=Qt.AlignmentFlag.AlignLeft)
+            layout.addWidget(_separator(vertical))
+            layout.addWidget(self._transparency_label)
+            layout.addLayout(_row(transparency[1:]))
+            layout.addWidget(_separator(vertical))
+            layout.addLayout(_row([self.buttons[action] for action in ("toggle", "orient", "menu", "close")]))
+        else:
+            tail = [self.buttons[action] for action in ("toggle", "orient", "menu", "close")]
+            sections = [[self._grip, self.status, *actions], transparency, tail]
+            for i, section in enumerate(sections):
+                if i:
+                    layout.addWidget(_separator(vertical))
+                for widget in section:
+                    layout.addWidget(widget)
+        old, self._body = self._body, body
+        if old is not None:  # các nút đã chuyển sang body mới, body cũ chỉ còn vạch ngăn
+            self._frame.layout().removeWidget(old)
+            old.hide()
+            old.deleteLater()
+        self._frame.layout().addWidget(body)
+        for widget in body.findChildren(QWidget, options=Qt.FindChildOption.FindDirectChildrenOnly):
+            widget.show()  # đổi widget cha thì Qt ẩn widget đi
+        body.show()
+        orient = self.buttons["orient"]
+        orient.setIcon(glyph_icon(ORIENT_GLYPHS[vertical]))
+        orient.setToolTip("Xếp thanh nằm ngang" if vertical else "Xếp thanh thành cột dọc")
+        # tính lại layout ngay (bình thường Qt để tới vòng sự kiện sau), không thì cỡ cũ chặn thanh co lại
+        self._frame.layout().activate()
+        if self.layout() is not None:
+            self.layout().activate()
+        self.resize(self.sizeHint())  # không dùng adjustSize: nó ép cửa sổ rộng ít nhất 200 px
 
     def set_hotkeys(self, hotkeys: dict[str, str]) -> None:
         for action, key in hotkeys.items():
@@ -154,8 +208,6 @@ class ControlPanel(QWidget):
     def set_state(self, *, live: bool, paused: bool, transparency: int) -> None:
         """Cập nhật nút theo trạng thái của app; không phát lại signal."""
         self.buttons["live"].setChecked(live)
-        self.buttons["pause"].setChecked(paused)
-        self.buttons["pause"].setText("Tiếp tục" if paused else "Tạm dừng")
         for action in ("select", "screen", "repeat", "live", "toggle"):
             self.buttons[action].setEnabled(not paused)
         self.transparency.blockSignals(True)

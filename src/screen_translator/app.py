@@ -83,6 +83,7 @@ class TrayApp(QObject):
         self.status_text, self.loading = "Đang khởi động…", True
         self.paused = False
         self._live_before_pause = False
+        self._panel_before_live = False  # lúc bật live mode thanh điều khiển đang hiện: tắt live thì hiện lại
         self.save_timer = QTimer(self, singleShot=True, interval=500)  # kéo thanh trượt xong mới lưu cài đặt
         self.save_timer.timeout.connect(lambda: config_store.save(self.config))
         self._previous_foreground = 0
@@ -91,6 +92,9 @@ class TrayApp(QObject):
         self.live_timer.timeout.connect(self._live_tick)
         self.watcher = live.ChangeWatcher()
         self._live_job: int | None = None  # lượt live đang chờ luồng phụ; chưa xong thì không gửi thêm
+        self.escape_timer = QTimer(self, interval=30)  # theo dõi Esc lúc đang hiện bản dịch / bật live mode
+        self.escape_timer.timeout.connect(self._watch_escape)
+        self._escape_down = False
 
         self._handlers = {
             "select": self.start_selection,
@@ -99,7 +103,7 @@ class TrayApp(QObject):
             "live": self.toggle_live,
             "toggle": self.toggle_overlay,
             "edit": self.open_editor,
-            "escape": self.dismiss,
+            "escape": lambda: self.dismiss("phím tắt"),
         }
         self.menu = QMenu()  # giữ tham chiếu, không thì Python thu hồi mất menu
         self._panel_action = self.menu.addAction("Thanh điều khiển")
@@ -119,7 +123,7 @@ class TrayApp(QObject):
         self.menu.addAction("Cài đặt…").triggered.connect(self.open_settings)
         self.menu.addAction("Hướng dẫn…").triggered.connect(self.show_guide)
         self.menu.addAction("Thoát").triggered.connect(self.quit)
-        self.panel = ControlPanel(self.menu)
+        self.panel = ControlPanel(self.menu, vertical=self.config.panel_vertical)
         self.panel.triggered.connect(self._on_panel_action)
         self.panel.transparency_changed.connect(lambda value: self.set_display(overlay_opacity=100 - value))
         self.panel.moved.connect(lambda pos: self.set_display(panel_pos=(pos.x(), pos.y())))
@@ -136,10 +140,7 @@ class TrayApp(QObject):
         self.hotkeys.triggered.connect(lambda action: self._handlers[action]())
         self.edit_dialog.retranslate.connect(self.retranslate)
         self._register_hotkeys()
-        # Esc xóa bản dịch: giữ phím Esc theo lúc bản dịch hiện / ẩn, và nhả khi cửa sổ của app (chọn vùng,
-        # hộp thoại, menu) đang được bấm vào để Esc đóng cửa sổ đó
-        self.overlay.installEventFilter(self)
-        QGuiApplication.instance().focusWindowChanged.connect(lambda _: self._sync_escape())
+        self.overlay.installEventFilter(self)  # Esc xóa bản dịch: theo dõi lúc bản dịch hiện / ẩn
         self.tray.show()
 
     def _register_hotkeys(self) -> None:
@@ -207,18 +208,29 @@ class TrayApp(QObject):
             config_store.save(self.config)
 
     def _place_panel(self) -> None:
-        """Chỗ đã kéo tới lần trước, nếu vẫn nằm trên một màn hình; không thì giữa mép trên màn hình chính."""
+        """Chỗ đã kéo tới lần trước, nếu vẫn nằm trên một màn hình; không thì giữa mép trên (thanh ngang) / mép
+        trái (thanh dọc) của màn hình chính."""
         if self.config.panel_pos and QGuiApplication.screenAt(QPoint(*self.config.panel_pos)):
             self.panel.move(*self.config.panel_pos)
             return
         screen = QGuiApplication.primaryScreen().availableGeometry()
-        self.panel.move(screen.center().x() - self.panel.width() // 2, screen.top() + 8)
+        if self.panel.vertical:
+            self.panel.move(screen.left() + 8, screen.center().y() - self.panel.height() // 2)
+        else:
+            self.panel.move(screen.center().x() - self.panel.width() // 2, screen.top() + 8)
+
+    def _rotate_panel(self) -> None:
+        """Ngang ↔ dọc; góc trên-trái giữ chỗ cũ, thanh không lòi ra ngoài màn hình."""
+        self.panel.set_vertical(not self.panel.vertical)
+        screen = QGuiApplication.screenAt(self.panel.pos()) or QGuiApplication.primaryScreen()
+        self.panel.move(clamp(self.panel.geometry(), screen.availableGeometry()).topLeft())
+        self.set_display(panel_vertical=self.panel.vertical, panel_pos=(self.panel.x(), self.panel.y()))
 
     def _on_panel_action(self, action: str) -> None:
-        if action == "pause":
-            self.set_paused(not self.paused)
-        elif action == "close":
+        if action == "close":
             self.set_panel_visible(False)
+        elif action == "orient":
+            self._rotate_panel()
         else:
             self._handlers[action]()
 
@@ -389,9 +401,16 @@ class TrayApp(QObject):
         self.watcher = live.ChangeWatcher()
         self.worker.reset_live()
         self._set_live(True)
-        self.notify("Đã bật live mode: câu mới trong vùng đã chọn sẽ tự được dịch.")
+        self.notify("Đã bật live mode: câu mới trong vùng đã chọn sẽ tự được dịch. Bấm Esc để tắt.")
 
     def _set_live(self, on: bool) -> None:
+        """Bật live mode thì cất thanh điều khiển đi cho gọn; tắt (Esc) thì thanh hiện lại như trước."""
+        if on and not self.live_timer.isActive():
+            self._panel_before_live = self.panel.isVisible()
+            self.panel.hide()
+            self._panel_action.setChecked(False)
+        elif not on and self.live_timer.isActive() and self._panel_before_live and self.config.show_panel:
+            self.set_panel_visible(True)  # trong lúc live đã bấm ✕ ẩn thanh thì thôi
         if on:
             self.live_timer.start()
         else:
@@ -443,7 +462,7 @@ class TrayApp(QObject):
     # --- kiểu hiện bản dịch ---
 
     def set_display(self, **changes) -> None:
-        """Đổi cài đặt hiển thị từ thanh điều khiển (độ trong suốt, chỗ của thanh) và vẽ lại ngay."""
+        """Đổi cài đặt hiển thị từ thanh điều khiển (độ trong suốt, chỗ và chiều của thanh) và vẽ lại ngay."""
         self.config = replace(self.config, **changes)
         self.overlay.set_appearance(Appearance.from_config(self.config))
         if self.overlay.isVisible() and self.shown_items:
@@ -459,22 +478,38 @@ class TrayApp(QObject):
         elif self.overlay.has_text():
             self.overlay.show()
 
-    def dismiss(self) -> None:
-        """Esc: xóa hẳn bản dịch đang hiện; lượt đang dịch dở cũng bỏ, không hiện ra nữa."""
+    def dismiss(self, via: str) -> None:
+        """Esc: xóa hẳn bản dịch đang hiện, lượt đang dịch dở cũng bỏ; đang bật live mode thì tắt luôn."""
+        log.info("Esc (%s): xóa bản dịch", via)
         self.job = 0
         self.shown_items = []
         self.overlay.show_items([])
         self.hint.hide()
+        if self.live_timer.isActive():
+            self.toggle_live()  # tắt, kèm dòng "Đã tắt live mode."
 
     def _sync_escape(self) -> None:
-        """Giữ Esc khi đang hiện bản dịch chụp một lần; live mode thì Esc vẫn để cho game."""
-        focus = QGuiApplication.focusWindow()  # đang bấm vào cửa sổ của app: Esc đóng cửa sổ đó
-        self.hotkeys.set_escape(
-            self.overlay.isVisible()
-            and not self.live_timer.isActive()
-            and not self.paused
-            and (focus is None or not focus.isVisible())
-        )
+        """Chỉ theo dõi Esc khi đang hiện bản dịch hoặc đang bật live mode; còn lại Esc để cho game."""
+        if (self.overlay.isVisible() or self.live_timer.isActive()) and not self.paused:
+            if not self.escape_timer.isActive():
+                self._escape_down = win32.key_down(win32.VK_ESCAPE)  # Esc đang giữ từ trước không tính
+                self.escape_timer.start()
+            self._watch_escape()
+        else:
+            self.escape_timer.stop()
+            self.hotkeys.set_escape(False)
+
+    def _watch_escape(self) -> None:
+        """Giữ phím Esc cho app, trừ lúc đang dùng cửa sổ của app (chọn vùng, hộp thoại, menu): Esc đóng cửa sổ đó.
+
+        Có game chặn phím tắt toàn cục khi đang được focus, nên đọc thêm thẳng trạng thái phím Esc.
+        """
+        ours = win32.window_process_id(win32.foreground_window()) == os.getpid()
+        self.hotkeys.set_escape(not ours)
+        down = win32.key_down(win32.VK_ESCAPE)
+        pressed, self._escape_down = down and not self._escape_down, down
+        if pressed and not ours:
+            self.dismiss("đọc trạng thái phím")
 
     def eventFilter(self, watched, event) -> bool:
         if watched is self.overlay and event.type() in (QEvent.Type.Show, QEvent.Type.Hide):

@@ -245,16 +245,18 @@ class SettingsDialog(QDialog):
 GUIDE = """
 <h2>ScreenTranslator</h2>
 <p>Mọi việc làm được bằng chuột trên <b>thanh điều khiển</b> nổi ở mép trên màn hình (nắm chỗ trống
-để kéo đi), hoặc bằng phím tắt. Icon <b>訳</b> ở khay hệ thống, cạnh đồng hồ (có thể nằm trong mũi tên
+để kéo đi; nút cạnh nút <b>…</b> xếp thanh thành cột dọc / hàng ngang), hoặc bằng phím tắt. Icon <b>訳</b> ở khay hệ thống, cạnh đồng hồ (có thể nằm trong mũi tên
 <b>^</b>): chuột trái ẩn / hiện thanh điều khiển, chuột phải mở menu.</p>
 <h3>Dịch visual novel</h3>
 <ol>
 <li>Mở game, bấm <b>Chọn vùng</b> ({select}) rồi kéo chuột quanh khung thoại.</li>
-<li>Bấm <b>Live</b> ({live}): câu mới hiện ra là tự được dịch, icon chuyển xanh lá.</li>
+<li>Bấm <b>Live</b> ({live}): câu mới hiện ra là tự được dịch, icon chuyển xanh lá. Thanh điều khiển tự ẩn
+cho gọn; bấm <b>Esc</b> để tắt live mode, thanh hiện lại.</li>
 <li>Menu, nút bấm, bản đồ…: bấm <b>Cả cửa sổ</b> ({screen}).</li>
-<li>Đọc xong bản dịch chụp một lần: bấm <b>Esc</b> để xóa. Lúc bật live mode thì Esc vẫn để cho game.</li>
+<li>Đọc xong bản dịch: bấm <b>Esc</b> để xóa (bấm lần nữa thì game nhận Esc).</li>
 <li>Muốn xem chữ Nhật gốc: kéo thanh <b>Trong suốt</b>, hoặc {toggle} ẩn / hiện bản dịch.</li>
-<li>Cần chơi mà không dịch: <b>Tạm dừng</b> trả phím tắt cho game và gỡ model dịch khỏi card đồ họa.</li>
+<li>Cần chơi mà không dịch: menu <b>…</b> → <i>Tạm dừng</i> trả phím tắt cho game và gỡ model dịch khỏi card
+đồ họa.</li>
 <li>Tên nhân vật bị dịch sai: menu → <i>Tên riêng, thuật ngữ…</i></li>
 </ol>
 <h3>Phím tắt</h3>
@@ -274,7 +276,7 @@ class GuideDialog(QDialog):
         labels = [(hotkeys[action], label) for action, label in HOTKEY_LABELS.items()]
         rows = "".join(
             f"<tr><td><b>{escape(key)}</b></td><td>{escape(label)}</td></tr>"
-            for key, label in [*labels, ("Esc", "Xóa bản dịch đang hiện (trừ live mode)")]
+            for key, label in [*labels, ("Esc", "Xóa bản dịch đang hiện, tắt live mode")]
         )
         text = QLabel(GUIDE.format(rows=rows, **{action: escape(key) for action, key in hotkeys.items()}))
         text.setWordWrap(True)

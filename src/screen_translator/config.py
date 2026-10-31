@@ -62,6 +62,7 @@ class Config:
     overlay_color: str = "#0c101c"
     welcomed: bool = False  # đã xem màn hình chào lần đầu
     show_panel: bool = True  # thanh điều khiển nổi
+    panel_vertical: bool = False  # thanh xếp thành cột dọc thay vì hàng ngang
     panel_pos: tuple[int, int] | None = None  # chỗ thanh điều khiển (tọa độ logic); None: giữa mép trên màn hình
 
     @property

@@ -13,6 +13,7 @@ MOD_CONTROL = 0x2
 MOD_SHIFT = 0x4
 MOD_WIN = 0x8
 MOD_NOREPEAT = 0x4000
+VK_ESCAPE = 0x1B
 DWMWA_EXTENDED_FRAME_BOUNDS = 9
 
 user32.SetWindowDisplayAffinity.argtypes = [wintypes.HWND, wintypes.DWORD]
@@ -30,6 +31,8 @@ user32.IsIconic.argtypes = [wintypes.HWND]
 user32.IsIconic.restype = wintypes.BOOL
 user32.GetWindowThreadProcessId.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.DWORD)]
 user32.GetWindowThreadProcessId.restype = wintypes.DWORD
+user32.GetAsyncKeyState.argtypes = [ctypes.c_int]
+user32.GetAsyncKeyState.restype = ctypes.c_short
 dwmapi.DwmGetWindowAttribute.argtypes = [wintypes.HWND, wintypes.DWORD, ctypes.c_void_p, wintypes.DWORD]
 dwmapi.DwmGetWindowAttribute.restype = ctypes.c_long
 
@@ -70,6 +73,11 @@ def window_process_id(hwnd: int) -> int:
     pid = wintypes.DWORD()
     user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
     return pid.value
+
+
+def key_down(vk: int) -> bool:
+    """Phím đang được nhấn, đọc thẳng trạng thái bàn phím (vẫn đọc được khi game chặn phím tắt toàn cục)."""
+    return bool(user32.GetAsyncKeyState(vk) & 0x8000)
 
 
 def cursor_pos() -> tuple[int, int]:
