@@ -15,7 +15,7 @@ from PySide6.QtCore import QObject, Signal
 from .cache import TranslationCache
 from .config import APP_DIR, GLOSSARY_PATH, OCR_ENGINES, Config
 from .glossary import Entry, Glossary, exact, relevant, signature
-from .layout import group_lines, has_japanese
+from .layout import group_lines, has_japanese, similar
 from .ocr import MangaOcrReader, create_reader
 from .translate import tidy, translate, unload
 
@@ -164,7 +164,9 @@ class Worker(QObject):
         key = tuple(item.ja for item in items)
         if kind == "live":
             settled = payload[1]
-            if key == self._live_shown or (not settled and key != self._live_pending):
+            # OCR đọc lại câu đang hiện mà lệch vài chữ (っ thành つ…) vẫn là câu cũ: không dịch lại, bản dịch khỏi nháy
+            unchanged = self._live_shown is not None and similar("".join(key), "".join(self._live_shown))
+            if unchanged or (not settled and key != self._live_pending):
                 # chữ không đổi, hoặc hình còn đang đổi mà chữ khác lần đọc trước (câu đang chạy dở): chờ tiếp
                 self._live_pending = key
                 self.idle.emit(job_id)
@@ -222,7 +224,7 @@ class Worker(QObject):
         """Cả khung thoại vừa hiện thành một lượt ngữ cảnh cho câu sau; bấm Dịch lại cùng câu thì không ghi thêm."""
         shown = [item for item in items if item.en != UNTRANSLATED]
         turn = ("\n".join(item.ja for item in shown), "\n".join(item.en for item in shown))
-        if shown and turn not in self._context:
+        if shown and not any(similar(turn[0], ja) for ja, _ in self._context):
             self._context.append(turn)
 
     def _translate(self, ja: str, glossary: list[Entry], context: list[tuple[str, str]]) -> str:

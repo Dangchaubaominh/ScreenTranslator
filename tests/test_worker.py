@@ -283,6 +283,20 @@ def test_live_mode_shows_each_new_line_once(qapp, fake):
     assert [ja for _, ja, _ in fake["translated"][1:]] == [DIALOG.text, line.text]  # câu dở không bị dịch
 
 
+def test_a_line_read_with_an_ocr_slip_is_not_translated_again(qapp, fake):
+    w, events = start(qapp)
+    line = TextBox("枕元に何かが転がっていた。", 410, 810, 900, 846)
+    slip = replace(line, text="枕元に何かが転がつていた。")  # OneOCR đọc っ thành つ
+    english = "“枕元に何かが転がっていた。” in English"
+    assert run_live(qapp, w, events, screen(line), settled=True) == [english]
+    assert run_live(qapp, w, events, screen(slip), settled=True) == "idle"  # vẫn câu đang hiện: bản dịch khỏi nháy
+    w.submit_page(screen(slip))  # cuộn trang manga rồi đọc lại bóng thoại: dùng luôn bản dịch vừa có
+    wait_until(qapp, lambda: len(finished(events)) == 2)
+    w.stop()
+    assert [item.en for item in finished(events)[-1][1]] == [english]
+    assert [ja for _, ja, _ in fake["translated"][1:]] == [line.text]
+
+
 def test_falls_back_to_manga_ocr_when_oneocr_is_missing(qapp, fake, monkeypatch):
     def broken(engine, device):
         raise RuntimeError("không tìm thấy OneOCR")

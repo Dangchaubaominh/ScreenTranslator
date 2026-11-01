@@ -27,3 +27,13 @@ def test_translations_depend_on_the_glossary_used(tmp_path):
     assert cache.get("vntl", "霊夢の部屋", glossary="霊夢=Reimu|Female") == "Reimu's room"
     assert cache.get("vntl", "霊夢の部屋") is None  # dịch lúc chưa khai tên: không dùng lại
     cache.close()
+
+
+def test_a_line_read_with_an_ocr_slip_reuses_the_recent_translation():
+    cache = TranslationCache(":memory:")
+    cache.put("vntl", "枕元に何かが転がっていた。", "Something was lying by my pillow.")
+    assert cache.get("vntl", "枕元に何かが転がつていた。") == "Something was lying by my pillow."
+    assert cache.get("vntl", "枕元に何かが転がつていた。", glossary="霊夢=Reimu|Female") is None
+    assert cache.get("qwen2.5:3b", "枕元に何かが転がつていた。") is None
+    assert cache.get("vntl", "枕元に何もなかった。") is None
+    cache.close()

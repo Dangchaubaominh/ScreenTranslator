@@ -12,6 +12,7 @@ _JAPANESE = re.compile(r"[぀-ヿ㐀-鿿ｦ-ﾟ]")
 WRAP_RATIO = 6  # dòng rộng hơn 6 lần chiều cao mới có thể là dòng bị ngắt giữa câu; nhãn ngắn thì không
 MAX_GAP = 0.6  # khoảng trống tối đa giữa hai dòng của cùng một khối, tính theo chiều cao dòng (cột: bề rộng cột)
 COLUMN_RATIO = 1.5  # dòng cao hơn 1,5 lần bề rộng là một cột chữ dọc (từ 2 chữ trở lên)
+SIMILAR_PER = 10  # hai lần đọc cùng một câu được lệch 1 ký tự trên mỗi 10 ký tự (OCR đọc nhầm, chưa phải câu mới)
 
 
 @dataclass(frozen=True)
@@ -36,6 +37,25 @@ class TextBox:
 
 def has_japanese(text: str) -> bool:
     return bool(_JAPANESE.search(text))
+
+
+def similar(a: str, b: str) -> bool:
+    """Cùng một câu, chỉ lệch vì OCR (đọc っ thành つ, sót một dấu…): mỗi 10 ký tự được lệch 1 ký tự.
+
+    Câu dưới 10 ký tự phải khớp hẳn: 「うん」 với 「ううん」 là hai câu khác nhau.
+    """
+    allowed = max(len(a), len(b)) // SIMILAR_PER
+    if abs(len(a) - len(b)) > allowed:
+        return False
+    # khoảng cách Levenshtein (số ký tự phải thêm / bớt / thay), dừng sớm khi đã lệch quá mức cho phép
+    row = list(range(len(b) + 1))
+    for i, ca in enumerate(a, start=1):
+        diagonal, row[0] = row[0], i
+        for j, cb in enumerate(b, start=1):
+            diagonal, row[j] = row[j], min(row[j] + 1, row[j - 1] + 1, diagonal + (ca != cb))
+        if min(row) > allowed:
+            return False
+    return row[-1] <= allowed
 
 
 def _join(a: str, b: str) -> str:

@@ -1,4 +1,4 @@
-from screen_translator.layout import TextBox, group_lines, has_japanese
+from screen_translator.layout import TextBox, group_lines, has_japanese, similar
 
 # Các dòng OneOCR đọc được trên ảnh chụp game thật (4.webp, 1.png), giữ nguyên tọa độ
 
@@ -81,3 +81,12 @@ def test_horizontal_lines_and_vertical_columns_on_one_page():
 def test_has_japanese():
     assert has_japanese("ログ▲") and has_japanese("ｽｷｯﾌﾟ") and has_japanese("1日目")
     assert not has_japanese("ver 1.00") and not has_japanese("HP") and not has_japanese("×")
+
+
+def test_similar_tolerates_ocr_slips_but_not_a_different_line():
+    line = "枕元に何かが転がっていた。"
+    assert similar(line, "枕元に何かが転がつていた。")  # っ đọc thành つ
+    assert similar(line, "枕元に何かが転がっていた")  # sót dấu chấm
+    assert not similar(line, "枕元に何かが転がつていた")  # 13 ký tự: chỉ được lệch 1
+    assert not similar("うん", "ううん") and not similar("行きます", "行きません")  # câu ngắn phải khớp hẳn
+    assert similar("", "") and not similar("", "はい")
