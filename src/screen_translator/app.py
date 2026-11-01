@@ -583,6 +583,16 @@ class TrayApp(QObject):
 
     # --- hướng dẫn, shortcut ---
 
+    def greet(self, *, autostart: bool) -> None:
+        """Lúc mở app. Mở bằng tay (menu Start, Desktop…) thì luôn hiện thanh điều khiển, kể cả khi lần trước đã
+        bấm ✕ ẩn thanh; tự chạy lúc mở Windows thì chỉ có icon ở khay."""
+        if not autostart:
+            self.set_panel_visible(True)
+        if not self.config.welcomed:
+            self.show_guide(first_run=True)
+        elif not autostart:
+            self.notify("ScreenTranslator đang chạy nền (icon 訳 ở khay hệ thống).")
+
     def show_guide(self, *, first_run: bool = False) -> None:
         """Màn hình chào lần đầu (kèm lựa chọn tạo shortcut); sau đó mở lại từ menu, hoặc khi mở app lần nữa."""
         if self.guide is None:
@@ -666,10 +676,5 @@ def run(*, autostart: bool = False) -> int:
         return 0
     tray_app = TrayApp()
     _listen_for_wake(tray_app)
-    if not autostart and tray_app.config.show_panel:  # tự chạy lúc mở Windows thì chỉ có icon ở khay
-        tray_app.set_panel_visible(True)
-    if not tray_app.config.welcomed:
-        tray_app.show_guide(first_run=True)
-    elif not autostart:
-        tray_app.notify("ScreenTranslator đang chạy nền (icon 訳 ở khay hệ thống).")
+    tray_app.greet(autostart=autostart)
     return app.exec()

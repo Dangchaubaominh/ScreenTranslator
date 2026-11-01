@@ -547,6 +547,16 @@ def test_first_run_guide_offers_shortcuts_and_is_shown_once(qapp, monkeypatch, t
     tray_app.hotkeys.clear()
 
 
+def test_opening_the_app_by_hand_always_shows_the_panel(qapp, monkeypatch):
+    tray_app, messages = make_tray_app(monkeypatch, Config(welcomed=True, show_panel=False))
+    tray_app.greet(autostart=True)  # tự chạy lúc mở Windows: chỉ có icon ở khay
+    assert not tray_app.panel.isVisible() and messages == []
+    tray_app.greet(autostart=False)  # mở từ menu Start / Desktop, dù lần trước đã bấm ✕ ẩn thanh
+    assert tray_app.panel.isVisible() and tray_app.config.show_panel and tray_app._panel_action.isChecked()
+    tray_app.panel.hide()
+    tray_app.hotkeys.clear()
+
+
 def test_opening_the_app_again_shows_the_panel_of_the_running_one(qapp, monkeypatch):
     tray_app, _ = make_tray_app(monkeypatch, Config(welcomed=True, show_panel=False))
     monkeypatch.setattr(app_module, "INSTANCE_KEY", f"ScreenTranslator-test-{id(tray_app)}")
