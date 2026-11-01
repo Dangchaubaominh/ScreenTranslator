@@ -4,11 +4,10 @@ from conftest import wait_until
 from PIL import Image
 from PySide6.QtCore import QObject, QPoint, QRect, Qt, Signal
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QDialog, QDialogButtonBox, QLineEdit, QMenu, QSystemTrayIcon
+from PySide6.QtWidgets import QDialog, QLabel, QLineEdit, QMenu, QPushButton, QSystemTrayIcon
 
 from screen_translator import app as app_module
 from screen_translator.config import Config
-from screen_translator.ui.dialogs import SettingsDialog
 from screen_translator.ui.overlay import (
     GAP,
     MAX_PX,
@@ -20,6 +19,7 @@ from screen_translator.ui.overlay import (
 )
 from screen_translator.ui.panel import ControlPanel
 from screen_translator.ui.region_selector import RegionSelector
+from screen_translator.ui.window import SWATCHES, MainWindow
 from screen_translator.worker import READY, Item
 
 LONG_TEXT = "This is a rather long translated sentence that has to wrap over several lines. " * 4
@@ -171,11 +171,11 @@ def test_escape_and_right_click_cancel_once(qapp):
 
 def settings_dialog(qapp, **hotkeys: str):
     """Đổi phím tắt của các hành động (select="Ctrl+Shift+Q"…) rồi bấm Lưu."""
-    dialog = SettingsDialog(Config(), ["a:1b", "b:2b"])
-    edits = {edit.text(): edit for edit in dialog.findChildren(QLineEdit)}
+    dialog = MainWindow(Config(), ["a:1b", "b:2b"])
+    edits = {edit.text(): edit for edit in dialog.findChildren(QLineEdit, "keyedit")}
     for action, text in hotkeys.items():
         edits[Config().hotkeys[action]].setText(text)
-    dialog.findChild(QDialogButtonBox).button(QDialogButtonBox.StandardButton.Save).click()
+    dialog.findChild(QPushButton, "primary").click()
     return dialog
 
 
@@ -187,7 +187,18 @@ def test_settings_rejects_duplicate_hotkeys(qapp):
 
 
 def test_settings_rejects_invalid_hotkey(qapp):
-    assert settings_dialog(qapp, select="Q").result() != QDialog.DialogCode.Accepted
+    dialog = settings_dialog(qapp, select="Q")
+    assert dialog.result() != QDialog.DialogCode.Accepted
+    assert dialog.current_page() == "hotkeys"  # mở đúng trang có ô cần sửa
+
+
+def test_guide_shows_the_hotkeys_being_edited(qapp):
+    dialog = MainWindow(Config(), [])
+    assert dialog.current_page() == "guide"
+    chips = [chip.text() for chip in dialog.findChildren(QLabel, "key")]
+    assert chips.count("Ctrl+Alt+T") == 1 and chips.count("Ctrl+Alt+L") == 2
+    dialog.findChildren(QLineEdit, "keyedit")[0].setText("Ctrl+Shift+Q")  # sửa phím Chọn vùng ở trang Phím tắt
+    assert "Ctrl+Shift+Q" in [chip.text() for chip in dialog.findChildren(QLabel, "key")]
 
 
 def test_settings_saves_valid_hotkeys(qapp):
@@ -197,16 +208,18 @@ def test_settings_saves_valid_hotkeys(qapp):
 
 
 def test_settings_display_tab(qapp):
-    dialog = SettingsDialog(Config(), [], {"start_menu": True, "desktop": False, "autostart": False})
+    dialog = MainWindow(Config(), [], {"start_menu": True, "desktop": False, "autostart": False})
+    dialog.show_page("appearance")
     dialog._font_px.setValue(22)
     dialog._transparency.setValue(40)
+    dialog._swatches.buttons()[list(SWATCHES).index("#14532d")].click()
     assert dialog._preview.appearance.max_px == 22
-    dialog._preview.grab()  # vẽ thử được
+    dialog.grab()  # vẽ thử được cả cửa sổ
     config = dialog.result_config()
-    assert (config.overlay_font_px, config.overlay_opacity) == (22, 60)
+    assert (config.overlay_font_px, config.overlay_opacity, config.overlay_color) == (22, 60, "#14532d")
     assert dialog.startup.wanted() == {"start_menu": True, "desktop": False, "autostart": False}
     # chưa có screen-translator-gui.exe: không chọn được shortcut
-    assert SettingsDialog(Config(), []).startup.wanted() is None
+    assert MainWindow(Config(), []).startup.wanted() is None
 
 
 class FakeWorker(QObject):
@@ -249,6 +262,7 @@ def make_tray_app(monkeypatch, config: Config | None = None):
     monkeypatch.setattr(app_module, "Worker", FakeWorker)
     monkeypatch.setattr(app_module.config_store, "load", lambda: config or Config())
     monkeypatch.setattr(app_module.config_store, "save", lambda config: None)  # không ghi đè cài đặt thật
+    monkeypatch.setattr(app_module, "installed_models", list)  # không hỏi Ollama thật
     tray_app = app_module.TrayApp()
     messages = []
     monkeypatch.setattr(tray_app, "notify", lambda message, **_: messages.append(message))
@@ -522,55 +536,60 @@ def test_info_is_a_short_hint_and_errors_are_windows_popups(qapp, monkeypatch):
     tray_app.hotkeys.clear()
 
 
-def test_first_run_guide_offers_shortcuts_and_is_shown_once(qapp, monkeypatch, tmp_path):
-    tray_app, _ = make_tray_app(monkeypatch)
-    saved, applied = [], []
-    monkeypatch.setattr(app_module.config_store, "save", saved.append)
+def test_welcome_screen_on_every_launch_and_shortcuts_only_when_ticked(qapp, monkeypatch, tmp_path):
+    tray_app, messages = make_tray_app(monkeypatch, Config(show_panel=False))  # lần trước đã bấm ✕ ẩn thanh
+    states, applied = dict.fromkeys(app_module.shortcuts.LABELS, False), []
     launcher = tmp_path / "screen-translator-gui.exe"
     launcher.write_bytes(b"")
     monkeypatch.setattr(app_module.shortcuts, "launcher", lambda: launcher)
-    monkeypatch.setattr(app_module.shortcuts, "states", lambda: dict.fromkeys(app_module.shortcuts.LABELS, False))
+    monkeypatch.setattr(app_module.shortcuts, "states", lambda: dict(states))
     monkeypatch.setattr(app_module.shortcuts, "ICON_PATH", tmp_path / "icon.ico")
-    monkeypatch.setattr(app_module.shortcuts, "apply", applied.append)
+    monkeypatch.setattr(app_module.shortcuts, "apply", lambda wanted: (applied.append(wanted), states.update(wanted)))
 
-    tray_app.show_guide(first_run=True)
-    assert tray_app.guide.isVisible()
-    tray_app.guide.accept()
-    assert applied == [{"start_menu": True, "desktop": True, "autostart": False}]
-    assert (tmp_path / "icon.ico").exists()
-    assert saved[-1].welcomed and tray_app.config.welcomed and tray_app.guide is None
-
-    tray_app.show_guide()  # mở lại từ menu: chỉ có hướng dẫn
-    assert tray_app.guide.startup is None
-    tray_app.guide.accept()
-    assert len(applied) == len(saved) == 1
-    tray_app.panel.hide()
-    tray_app.hotkeys.clear()
-
-
-def test_first_run_shows_the_control_panel_after_start(qapp, monkeypatch, tmp_path):
-    tray_app, messages = make_tray_app(monkeypatch, Config(show_panel=False))  # lần đầu mở app
-    monkeypatch.setattr(app_module.shortcuts, "launcher", lambda: tmp_path / "chưa-có.exe")  # không đụng shortcut thật
-    tray_app.greet(autostart=False)
-    assert tray_app.guide.isVisible() and not tray_app.panel.isVisible() and messages == []
-    tray_app.guide.accept()  # bấm "Bắt đầu"
-    assert tray_app.panel.isVisible() and tray_app.config.show_panel and tray_app.config.welcomed
-    tray_app.panel.hide()
-    tray_app.hotkeys.clear()
-
-
-def test_opening_the_app_by_hand_always_shows_the_panel(qapp, monkeypatch):
-    tray_app, messages = make_tray_app(monkeypatch, Config(welcomed=True, show_panel=False))
     tray_app.greet(autostart=True)  # tự chạy lúc mở Windows: chỉ có icon ở khay
-    assert not tray_app.panel.isVisible() and messages == []
-    tray_app.greet(autostart=False)  # mở từ menu Start / Desktop, dù lần trước đã bấm ✕ ẩn thanh
+    assert tray_app.window is None and not tray_app.panel.isVisible() and messages == []
+
+    tray_app.greet(autostart=False)  # mở từ menu Start / Desktop
+    assert tray_app.window.isVisible() and tray_app.window.current_page() == "guide"
+    assert not tray_app.panel.isVisible()
+    assert not any(tray_app.window.startup.wanted().values())  # không bật sẵn gì
+    tray_app.window.accept()  # bấm "Bắt đầu" mà không bật gì: không tạo shortcut nào
+    assert applied == [] and tray_app.window is None
     assert tray_app.panel.isVisible() and tray_app.config.show_panel and tray_app._panel_action.isChecked()
+
     tray_app.panel.hide()
+    tray_app.greet(autostart=False)  # lần mở sau vẫn có màn hình chào
+    tray_app.window.startup._boxes["autostart"].setChecked(True)  # người dùng tự bật ở trang Cài đặt
+    tray_app.window.accept()
+    assert applied == [{"start_menu": False, "desktop": False, "autostart": True}]
+    assert (tmp_path / "icon.ico").exists()
+
+    tray_app.panel.hide()
+    quits = []
+    monkeypatch.setattr(tray_app, "quit", lambda: quits.append(True))
+    tray_app.greet(autostart=False)  # shortcut đã có thì được bật sẵn; đóng bằng ✕: không đổi gì, thoát app
+    assert tray_app.window.startup.wanted()["autostart"]
+    tray_app.window.startup._boxes["desktop"].setChecked(True)
+    QTest.keyClick(tray_app.window, Qt.Key.Key_Escape)  # Esc (phím xóa bản dịch) không được đóng màn hình chào
+    assert tray_app.window is not None and tray_app.window.isVisible() and quits == []
+    tray_app.window.reject()
+    assert len(applied) == 1 and not tray_app.panel.isVisible() and quits == [True]
+
+    tray_app.open_window("settings")  # mở từ menu Cài đặt: Lưu / Hủy, không đụng tới thanh điều khiển
+    assert not tray_app.window.welcome and tray_app.window.current_page() == "settings"
+    flags = tray_app.window.windowFlags()  # cửa sổ thường: có nút thu nhỏ, app khác đè lên được
+    assert flags & Qt.WindowType.WindowMinimizeButtonHint and not flags & Qt.WindowType.WindowStaysOnTopHint
+    tray_app.window.showMinimized()
+    tray_app.open_window("guide")  # đang mở (kể cả đang thu nhỏ) thì hiện lại và chỉ chuyển trang
+    assert tray_app.window.current_page() == "guide" and not tray_app.window.isMinimized()
+    tray_app.window._font_px.setValue(20)
+    tray_app.window.accept()
+    assert tray_app.config.overlay_font_px == 20 and not tray_app.panel.isVisible() and len(applied) == 1
     tray_app.hotkeys.clear()
 
 
 def test_opening_the_app_again_shows_the_panel_of_the_running_one(qapp, monkeypatch):
-    tray_app, _ = make_tray_app(monkeypatch, Config(welcomed=True, show_panel=False))
+    tray_app, _ = make_tray_app(monkeypatch, Config(show_panel=False))
     monkeypatch.setattr(app_module, "INSTANCE_KEY", f"ScreenTranslator-test-{id(tray_app)}")
     assert not app_module._wake_running_instance()
     app_module._listen_for_wake(tray_app)

@@ -16,13 +16,14 @@ from PySide6.QtWidgets import QApplication, QDialog, QMenu, QSystemTrayIcon
 
 from . import capture, live, shortcuts, win32
 from . import config as config_store
-from .config import GLOSSARY_PATH, HOTKEY_LABELS
+from .config import GLOSSARY_PATH, HOTKEY_LABELS, Config
 from .glossary import ensure_file
 from .hotkeys import HotkeyWindow
-from .ui.dialogs import EditDialog, GuideDialog, SettingsDialog, StartupOptions
+from .ui.dialogs import EditDialog
 from .ui.overlay import GAP, HINT_PX, Appearance, Overlay, clamp, hint_size
 from .ui.panel import ControlPanel
 from .ui.region_selector import RegionSelector
+from .ui.window import MainWindow
 from .worker import READY, Item, Worker
 
 log = logging.getLogger(__name__)
@@ -79,7 +80,7 @@ class TrayApp(QObject):
         self.hint_timer = QTimer(self, singleShot=True)
         self.hint_timer.timeout.connect(self.hint.hide)
         self.edit_dialog = EditDialog()
-        self.guide: GuideDialog | None = None
+        self.window: MainWindow | None = None  # cửa sổ chính, khi đang mở
         self.hotkeys = HotkeyWindow()
         self.selector: RegionSelector | None = None
         self.area: capture.Region | None = None  # vùng chụp gần nhất: vùng đã chọn, hoặc cả cửa sổ game
@@ -127,8 +128,8 @@ class TrayApp(QObject):
         self._menu_actions["live"].setCheckable(True)
         self.menu.addSeparator()
         self.menu.addAction("Tên riêng, thuật ngữ…").triggered.connect(self.open_glossary)
-        self.menu.addAction("Cài đặt…").triggered.connect(self.open_settings)
-        self.menu.addAction("Hướng dẫn…").triggered.connect(self.show_guide)
+        self.menu.addAction("Cài đặt…").triggered.connect(lambda: self.open_window("settings"))
+        self.menu.addAction("Hướng dẫn…").triggered.connect(lambda: self.open_window("guide"))
         self.menu.addAction("Thoát").triggered.connect(self.quit)
         self.panel = ControlPanel(self.menu, vertical=self.config.panel_vertical)
         self.panel.triggered.connect(self._on_panel_action)
@@ -559,65 +560,60 @@ class TrayApp(QObject):
             log.exception("Không mở được glossary")
             self.notify(f"Không mở được {GLOSSARY_PATH}: {e}", warning=True)
 
-    def open_settings(self) -> None:
-        try:
-            models = sorted(m.model for m in ollama.Client().list().models)
-        except (ConnectionError, ollama.ResponseError):
-            models = []  # Ollama chưa chạy: vẫn cho gõ tên model bằng tay
-        startup = self._shortcut_states()
-        dialog = SettingsDialog(self.config, models, startup)
-        if dialog.exec() == QDialog.DialogCode.Accepted:
-            self.config = dialog.result_config()
-            self.save_timer.stop()
-            config_store.save(self.config)
-            self.worker.reconfigure(self.config)
-            self.overlay.set_appearance(Appearance.from_config(self.config))
-            if self.overlay.isVisible() and self.shown_items:  # vẽ lại bản dịch đang hiện theo kiểu mới
-                self._show_result(self.shown_items)
-            if not self.paused:  # đang tạm dừng thì phím tắt vẫn để cho game
-                self._register_hotkeys()
-            self.panel.set_hotkeys(self.config.hotkeys)
-            self._update_tray()
-            if (wanted := dialog.startup.wanted()) is not None and wanted != startup:
-                self._apply_shortcuts(wanted)
+    def open_window(self, page: str = "guide", *, welcome: bool = False) -> None:
+        """Cửa sổ chính (hướng dẫn, phím tắt, cài đặt, chỉnh màu), mở ở trang `page`; đang mở thì chỉ chuyển trang.
 
-    # --- hướng dẫn, shortcut ---
+        welcome: màn hình chào lúc mở app. Chỉ bật sẵn shortcut đang có; shortcut mới (kể cả tự chạy khi mở Windows)
+        phải do người dùng tự bật.
+        """
+        if self.window is None:
+            self.window = MainWindow(self.config, installed_models(), self._shortcut_states(), welcome=welcome)
+            self.window.setWindowIcon(make_icon())
+            self.window.finished.connect(self._on_window_closed)
+        self.window.show_page(page)
+        self.window.setWindowState(self.window.windowState() & ~Qt.WindowState.WindowMinimized)  # đang thu nhỏ
+        self.window.show()
+        self.window.raise_()
+        self.window.activateWindow()
+
+    def _on_window_closed(self, result: int) -> None:
+        window, self.window = self.window, None
+        window.deleteLater()
+        if result == QDialog.DialogCode.Accepted:
+            # ghép vào cài đặt mới nhất: lúc cửa sổ mở vẫn kéo được thanh trượt, dời thanh điều khiển
+            self._apply_config(replace(self.config, **window.changes()))
+            wanted = window.startup.wanted()
+            if wanted is not None and wanted != self._shortcut_states():  # chỉ đụng tới shortcut khi có đổi
+                self._apply_shortcuts(wanted)
+        if window.welcome:
+            if result == QDialog.DialogCode.Accepted:  # bấm "Bắt đầu": dùng tiếp bằng thanh điều khiển
+                self.set_panel_visible(True)
+            else:  # bấm ✕ ở màn hình chào: thoát app
+                self.quit()
+
+    def _apply_config(self, config: Config) -> None:
+        if config == self.config:
+            return
+        self.config = config
+        self.save_timer.stop()
+        config_store.save(self.config)
+        self.worker.reconfigure(self.config)
+        self.overlay.set_appearance(Appearance.from_config(self.config))
+        if self.overlay.isVisible() and self.shown_items:  # vẽ lại bản dịch đang hiện theo kiểu mới
+            self._show_result(self.shown_items)
+        if not self.paused:  # đang tạm dừng thì phím tắt vẫn để cho game
+            self._register_hotkeys()
+        self.panel.set_hotkeys(self.config.hotkeys)
+        self._update_tray()
+
+    # --- màn hình chào, shortcut ---
 
     def greet(self, *, autostart: bool) -> None:
-        """Lúc mở app. Lần đầu: màn hình chào, bấm "Bắt đầu" thì thanh điều khiển mới hiện. Sau đó mở bằng tay (menu
-        Start, Desktop…) thì thanh hiện ngay, kể cả khi lần trước đã bấm ✕ ẩn thanh; tự chạy lúc mở Windows thì chỉ
-        có icon ở khay."""
-        if not self.config.welcomed:
-            self.show_guide(first_run=True)
-        elif not autostart:
-            self.set_panel_visible(True)
-            self.notify("ScreenTranslator đang chạy nền (icon 訳 ở khay hệ thống).")
-
-    def show_guide(self, *, first_run: bool = False) -> None:
-        """Màn hình chào lần đầu (kèm lựa chọn tạo shortcut); sau đó mở lại từ menu, hoặc khi mở app lần nữa."""
-        if self.guide is None:
-            startup = None
-            if first_run:
-                states = self._shortcut_states()  # lần đầu: gợi ý menu Start + Desktop, tự chạy thì để người dùng chọn
-                startup = StartupOptions(
-                    states and {key: on or key != "autostart" for key, on in states.items()},
-                )
-            self.guide = GuideDialog(self.config.hotkeys, startup)
-            self.guide.finished.connect(self._on_guide_closed)
-        self.guide.show()
-        self.guide.raise_()
-        self.guide.activateWindow()
-
-    def _on_guide_closed(self, result: int) -> None:
-        guide, self.guide = self.guide, None
-        guide.deleteLater()
-        if guide.startup is None:
-            return
-        if result == QDialog.DialogCode.Accepted and (wanted := guide.startup.wanted()) is not None:
-            self._apply_shortcuts(wanted)
-        self.config = replace(self.config, welcomed=True)
-        config_store.save(self.config)
-        self.set_panel_visible(True)  # bấm "Bắt đầu" (hay đóng màn hình chào): bắt đầu dùng bằng thanh điều khiển
+        """Mở app bằng tay (menu Start, Desktop…): luôn có màn hình chào; bấm "Bắt đầu" thì thanh điều khiển hiện, kể cả
+        khi lần trước đã bấm ✕ ẩn thanh; đóng màn hình chào bằng ✕ thì thoát app. Tự chạy lúc mở Windows thì chỉ có icon
+        ở khay."""
+        if not autostart:
+            self.open_window("guide", welcome=True)
 
     @staticmethod
     def _shortcut_states() -> dict[str, bool] | None:
@@ -644,6 +640,13 @@ class TrayApp(QObject):
         self.tray.hide()
         self.worker.stop()  # gỡ model dịch khỏi VRAM
         QApplication.quit()
+
+
+def installed_models() -> list[str]:
+    try:
+        return sorted(m.model for m in ollama.Client().list().models)
+    except (ConnectionError, ollama.ResponseError):
+        return []  # Ollama chưa chạy: vẫn cho gõ tên model bằng tay
 
 
 def _wake_running_instance() -> bool:

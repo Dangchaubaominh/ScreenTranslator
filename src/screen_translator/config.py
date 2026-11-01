@@ -60,7 +60,6 @@ class Config:
     overlay_font_px: int = 34  # cỡ chữ lớn nhất của bản dịch; khung nhỏ thì chữ tự thu nhỏ cho vừa
     overlay_opacity: int = 100  # % độ đặc của nền; thấp hơn thì chữ Nhật gốc lộ ra sau bản dịch
     overlay_color: str = "#0c101c"
-    welcomed: bool = False  # đã xem màn hình chào lần đầu
     show_panel: bool = True  # thanh điều khiển nổi
     panel_vertical: bool = False  # thanh xếp thành cột dọc thay vì hàng ngang
     panel_pos: tuple[int, int] | None = None  # chỗ thanh điều khiển (tọa độ logic); None: giữa mép trên màn hình
