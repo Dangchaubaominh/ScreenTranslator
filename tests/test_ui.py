@@ -544,6 +544,18 @@ def test_first_run_guide_offers_shortcuts_and_is_shown_once(qapp, monkeypatch, t
     assert tray_app.guide.startup is None
     tray_app.guide.accept()
     assert len(applied) == len(saved) == 1
+    tray_app.panel.hide()
+    tray_app.hotkeys.clear()
+
+
+def test_first_run_shows_the_control_panel_after_start(qapp, monkeypatch, tmp_path):
+    tray_app, messages = make_tray_app(monkeypatch, Config(show_panel=False))  # lần đầu mở app
+    monkeypatch.setattr(app_module.shortcuts, "launcher", lambda: tmp_path / "chưa-có.exe")  # không đụng shortcut thật
+    tray_app.greet(autostart=False)
+    assert tray_app.guide.isVisible() and not tray_app.panel.isVisible() and messages == []
+    tray_app.guide.accept()  # bấm "Bắt đầu"
+    assert tray_app.panel.isVisible() and tray_app.config.show_panel and tray_app.config.welcomed
+    tray_app.panel.hide()
     tray_app.hotkeys.clear()
 
 
