@@ -14,23 +14,16 @@ GLOSSARY_PATH = APP_DIR / "glossary.txt"  # tên riêng, thuật ngữ: sửa �
 
 # Hồ sơ hiệu năng (PLAN.md mục 7)
 PROFILES = {
-    "light": {  # game chạy trên Iris Xe, RTX 3050 dành cho dịch + OCR
+    "light": {  # game chạy trên Iris Xe, RTX 3050 dành cho dịch
         "label": "Nhẹ — game chạy trên Iris Xe, dịch bằng RTX 3050",
-        "ocr_device": "gpu",
         "ollama_options": {},
         "keep_alive": "30m",
     },
-    "heavy": {  # game cần RTX 3050, dịch + OCR chạy CPU
+    "heavy": {  # game cần RTX 3050, dịch chạy CPU
         "label": "Nặng — game dùng RTX 3050, dịch bằng CPU",
-        "ocr_device": "cpu",
         "ollama_options": {"num_gpu": 0},
         "keep_alive": "5m",
     },
-}
-
-OCR_ENGINES = {
-    "oneocr": "OneOCR — có sẵn trong Windows 11, chạy CPU, đọc được cả cửa sổ game",
-    "manga-ocr": "manga-ocr — mỗi lần một khối chữ, hợp với manga chữ dọc (GPU/CPU theo hồ sơ)",
 }
 
 HOTKEY_LABELS = {
@@ -50,7 +43,6 @@ OPACITY_RANGE = (0, 100)
 class Config:
     model: str = DEFAULT_MODEL
     profile: str = "light"
-    ocr_engine: str = "oneocr"
     hotkey_select: str = "Ctrl+Alt+T"
     hotkey_screen: str = "Ctrl+Alt+F"
     hotkey_repeat: str = "Ctrl+Alt+R"
@@ -67,10 +59,6 @@ class Config:
     def hotkeys(self) -> dict[str, str]:
         """Hành động → phím tắt, theo thứ tự của HOTKEY_LABELS."""
         return {action: getattr(self, f"hotkey_{action}") for action in HOTKEY_LABELS}
-
-    @property
-    def ocr_device(self) -> str:
-        return PROFILES[self.profile]["ocr_device"]
 
     @property
     def ollama_options(self) -> dict:
@@ -94,7 +82,6 @@ def load(path: Path = CONFIG_PATH) -> Config:
     return replace(
         config,
         profile=config.profile if config.profile in PROFILES else Config.profile,
-        ocr_engine=config.ocr_engine if config.ocr_engine in OCR_ENGINES else Config.ocr_engine,
         overlay_color=config.overlay_color if valid_color else Config.overlay_color,
         panel_pos=tuple(pos) if valid_pos else None,
         overlay_font_px=_clamp(config.overlay_font_px, FONT_PX_RANGE, Config.overlay_font_px),

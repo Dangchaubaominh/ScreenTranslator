@@ -7,13 +7,12 @@ authors = [
 ]
 requires-python = ">=3.12,<3.13"
 dependencies = [
-    "manga-ocr>=0.1.14",
     "mss>=10.2.0",
+    "numpy>=2",
     "ollama>=0.6",
     "oneocr>=1.0.12",
     "pillow>=11",
     "pyside6-essentials>=6.12.0",
-    "torch>=2.6",
 ]
 
 [dependency-groups]
@@ -22,15 +21,6 @@ dev = [
     "pytest>=9.2.0",
     "ruff>=0.17.3",
 ]
-
-# PyTorch bản CUDA 12.6: driver 566 của máy hỗ trợ tối đa CUDA 12.7
-[tool.uv.sources]
-torch = [{ index = "pytorch-cu126" }]
-
-[[tool.uv.index]]
-name = "pytorch-cu126"
-url = "https://download.pytorch.org/whl/cu126"
-explicit = true
 
 [project.scripts]
 screen-translator = "screen_translator:main"

@@ -39,7 +39,7 @@ from PySide6.QtWidgets import (
 )
 
 from .. import win32
-from ..config import FONT_PX_RANGE, GLOSSARY_PATH, HOTKEY_LABELS, OCR_ENGINES, OPACITY_RANGE, PROFILES, Config
+from ..config import FONT_PX_RANGE, GLOSSARY_PATH, HOTKEY_LABELS, OPACITY_RANGE, PROFILES, Config
 from ..glossary import Entry, Glossary, clean, ensure_file, update_file, valid_ja
 from ..hotkeys import parse_hotkey
 from ..shortcuts import LABELS as SHORTCUT_LABELS
@@ -518,10 +518,6 @@ class MainWindow(QDialog):
         self._model = ComboBox(editable=True)
         self._model.addItems(installed_models)
         self._model.setCurrentText(config.model)
-        self._ocr_engine = ComboBox()
-        for key, label in OCR_ENGINES.items():
-            self._ocr_engine.addItem(label, key)
-        self._ocr_engine.setCurrentIndex(self._ocr_engine.findData(config.ocr_engine))
         self._profile = ComboBox()
         for key, profile in PROFILES.items():
             self._profile.addItem(profile["label"], key)
@@ -707,13 +703,12 @@ class MainWindow(QDialog):
         card, layout = _card("Dịch")
         for label, field in (
             ("Model dịch (Ollama)", self._model),
-            ("Đọc chữ (OCR)", self._ocr_engine),
             ("Hồ sơ hiệu năng", self._profile),
         ):
             layout.addWidget(_label(label, wrap=False))
             layout.addWidget(field)
             layout.addSpacing(4)
-        return self._page("Cài đặt", "Model dịch, cách đọc chữ và cách mở app.", card, self.startup)
+        return self._page("Cài đặt", "Model dịch, hồ sơ hiệu năng và cách mở app.", card, self.startup)
 
     def _appearance_page(self) -> QScrollArea:
         self._preview = OverlayPreview()
@@ -772,7 +767,6 @@ class MainWindow(QDialog):
         return {
             "model": self._model.currentText().strip(),
             "profile": self._profile.currentData(),
-            "ocr_engine": self._ocr_engine.currentData(),
             "overlay_font_px": self._font_px.value(),
             "overlay_opacity": 100 - self._transparency.value(),
             "overlay_color": self._color.name(),

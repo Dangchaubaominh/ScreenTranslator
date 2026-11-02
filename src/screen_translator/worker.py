@@ -13,10 +13,10 @@ from PIL import Image
 from PySide6.QtCore import QObject, Signal
 
 from .cache import TranslationCache
-from .config import APP_DIR, GLOSSARY_PATH, OCR_ENGINES, Config
+from .config import APP_DIR, GLOSSARY_PATH, Config
 from .glossary import Entry, Glossary, exact, relevant, signature
 from .layout import group_lines, has_japanese, similar
-from .ocr import MangaOcrReader, create_reader
+from .ocr import OneOcrReader
 from .translate import tidy, translate, unload
 
 log = logging.getLogger(__name__)
@@ -241,27 +241,16 @@ class Worker(QObject):
         self._cache.put(self._config.model, ja, en, glossary=signature(relevant(glossary, ja)))
         return en
 
-    def _load_reader(self) -> bool:
-        """OneOCR lỗi thì chuyển sang manga-ocr. Trả về False nếu không nạp được gì (đã báo lỗi)."""
-        engine, device = self._config.ocr_engine, self._config.ocr_device
-        self._reader = None
-        self.status.emit(f"Đang nạp {OCR_ENGINES[engine].split(' — ')[0]}…", False)
+    def _load_reader(self) -> None:
+        self.status.emit("Đang nạp OneOCR…", False)
         start = time.perf_counter()
         try:
-            try:
-                self._reader = create_reader(engine, device)
-            except Exception as e:
-                if engine == "manga-ocr":
-                    raise
-                log.exception("OneOCR lỗi, chuyển sang manga-ocr")
-                self.status.emit(f"OneOCR không dùng được ({e}), chuyển sang manga-ocr", True)
-                self._reader = MangaOcrReader(device)
+            self._reader = OneOcrReader()
         except Exception as e:
             log.exception("Nạp OCR lỗi")
             self.status.emit(f"Nạp OCR lỗi: {e}", True)
-            return False
-        log.info("Nạp %s mất %.1fs", self._reader.name, time.perf_counter() - start)
-        return True
+            return
+        log.info("Nạp OneOCR mất %.1fs", time.perf_counter() - start)
 
     def _warm_up(self) -> None:
         """Nạp model dịch vào bộ nhớ ngay, để lần dịch đầu không phải chờ."""
@@ -276,13 +265,9 @@ class Worker(QObject):
 
     def _apply(self, config: Config) -> None:
         old, self._config = self._config, config
-        new_reader = (config.ocr_engine, config.ocr_device) != (old.ocr_engine, old.ocr_device)
-        reader_ready = new_reader and self._load_reader()  # nạp lỗi thì không báo "Sẵn sàng" đè lên lỗi
         if (config.model, config.ollama_options) != (old.model, old.ollama_options):
             self._unload(old.model)
             self._warm_up()
-        elif reader_ready:
-            self.status.emit(READY, False)
 
     def _unload(self, model: str | None = None) -> None:
         try:

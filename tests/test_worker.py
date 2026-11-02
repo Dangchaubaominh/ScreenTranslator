@@ -1,7 +1,6 @@
 import threading
 from dataclasses import replace
 from pathlib import Path
-from typing import ClassVar
 
 import ollama
 import pytest
@@ -20,16 +19,8 @@ WARM_UP = "こんにちは"
 class FakeReader:
     """Ảnh giả mang sẵn danh sách dòng chữ trong image.info["lines"]."""
 
-    name = "giả"
-    created: ClassVar[list[tuple[str, str]]] = []
-
     def read_lines(self, image):
         return image.info.get("lines", [])
-
-
-def fake_create_reader(engine, device):
-    FakeReader.created.append((engine, device))
-    return FakeReader()
 
 
 @pytest.fixture
@@ -45,7 +36,6 @@ def fake(monkeypatch):
         "slow": set(),
     }
     state["release"].set()
-    FakeReader.created = []
 
     def fake_translate(client, model, ja, **kwargs):
         if ja == WARM_UP:
@@ -59,7 +49,7 @@ def fake(monkeypatch):
         state["contexts"].append((ja, kwargs.get("context")))
         return f"「{ja}」 in English", None
 
-    monkeypatch.setattr(worker_module, "create_reader", fake_create_reader)
+    monkeypatch.setattr(worker_module, "OneOcrReader", FakeReader)
     monkeypatch.setattr(worker_module, "translate", fake_translate)
     monkeypatch.setattr(worker_module, "unload", lambda client, model: state["unloaded"].append(model))
     return state
@@ -108,7 +98,6 @@ def test_every_japanese_block_is_translated_and_shown_progressively(qapp, fake):
     assert last[2] is True
     assert [item.en for item in last[1]] == ["“設定” in English", dialog_en]
     assert ("Sẵn sàng", False) in events["status"]
-    assert FakeReader.created == [("oneocr", "gpu")]
     assert fake["unloaded"] == [Config().model]  # thoát thì trả VRAM
 
 
@@ -297,26 +286,26 @@ def test_a_line_read_with_an_ocr_slip_is_not_translated_again(qapp, fake):
     assert [ja for _, ja, _ in fake["translated"][1:]] == [line.text]
 
 
-def test_falls_back_to_manga_ocr_when_oneocr_is_missing(qapp, fake, monkeypatch):
-    def broken(engine, device):
+def test_reports_when_oneocr_is_missing(qapp, fake, monkeypatch):
+    def broken():
         raise RuntimeError("không tìm thấy OneOCR")
 
-    monkeypatch.setattr(worker_module, "create_reader", broken)
-    monkeypatch.setattr(worker_module, "MangaOcrReader", lambda device: FakeReader())
+    monkeypatch.setattr(worker_module, "OneOcrReader", broken)
     w, events = start(qapp)
     wait_until(qapp, lambda: ("Sẵn sàng", False) in events["status"])
+    job = w.submit_image(screen(DIALOG))
+    wait_until(qapp, lambda: events["failed"])
     w.stop()
-    assert any("chuyển sang manga-ocr" in message and is_error for message, is_error in events["status"])
+    assert any("không tìm thấy OneOCR" in message and is_error for message, is_error in events["status"])
+    assert events["failed"] == [(job, "Chưa nạp được OCR, xem file log.")]
 
 
-def test_reconfigure_switches_engine_and_model(qapp, fake):
+def test_reconfigure_switches_model(qapp, fake):
     w, events = start(qapp)
-    new = replace(Config(), model="qwen2.5:3b", profile="heavy", ocr_engine="manga-ocr")
-    w.reconfigure(new)
+    w.reconfigure(replace(Config(), model="qwen2.5:3b", profile="heavy"))
     job = w.submit_text("猫")
     wait_until(qapp, lambda: finished(events))
     w.stop()
-    assert FakeReader.created == [("oneocr", "gpu"), ("manga-ocr", "cpu")]
     assert fake["unloaded"] == [Config().model, "qwen2.5:3b"]
     assert fake["translated"][-1] == ("qwen2.5:3b", "猫", {"num_gpu": 0})
     assert finished(events)[0][0] == job

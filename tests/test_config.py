@@ -22,9 +22,9 @@ def test_save_then_load(tmp_path):
 
 def test_unknown_keys_and_bad_values_are_ignored(tmp_path):
     path = tmp_path / "config.json"
-    data = {"model": "x", "profile": "ultra", "ocr_engine": "tesseract", "old_setting": 1}
+    data = {"model": "x", "profile": "ultra", "ocr_engine": "manga-ocr", "show_panel": False}  # hai cài đặt cũ đã bỏ
     path.write_text(json.dumps(data), encoding="utf-8")
-    assert load(path) == Config(model="x", profile="light", ocr_engine="oneocr")
+    assert load(path) == Config(model="x", profile="light")
 
 
 def test_overlay_settings_are_kept_in_range(tmp_path):
@@ -41,6 +41,6 @@ def test_overlay_settings_are_kept_in_range(tmp_path):
 
 def test_profiles():
     light, heavy = Config(profile="light"), Config(profile="heavy")
-    assert (light.ocr_device, light.ollama_options) == ("gpu", {})
-    assert (heavy.ocr_device, heavy.ollama_options) == ("cpu", {"num_gpu": 0})
+    assert light.ollama_options == {}
+    assert heavy.ollama_options == {"num_gpu": 0}
     assert list(light.hotkeys) == ["select", "screen", "repeat", "live", "toggle", "edit"]

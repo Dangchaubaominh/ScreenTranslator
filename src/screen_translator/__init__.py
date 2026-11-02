@@ -1,4 +1,4 @@
-"""ScreenTranslator: dịch chữ tiếng Nhật trên màn hình sang tiếng Anh, chạy offline (OneOCR / manga-ocr + Ollama)."""
+"""ScreenTranslator: dịch chữ tiếng Nhật trên màn hình sang tiếng Anh, chạy offline (OneOCR + Ollama)."""
 
 import argparse
 import logging
@@ -38,13 +38,13 @@ def translate_file(path: Path) -> None:
     from . import config
     from .glossary import Glossary
     from .layout import group_lines, has_japanese
-    from .ocr import create_reader
+    from .ocr import OneOcrReader
     from .translate import tidy, translate
 
     sys.stdout.reconfigure(encoding="utf-8")
     cfg = config.load()
     glossary = Glossary(config.GLOSSARY_PATH).entries()
-    reader = create_reader(cfg.ocr_engine, cfg.ocr_device)
+    reader = OneOcrReader()
     client = ollama.Client()
     start = time.perf_counter()
     blocks = [b for b in group_lines(reader.read_lines(Image.open(path))) if has_japanese(b.text)]
