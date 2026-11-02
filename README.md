@@ -33,7 +33,7 @@ Translate on-screen Japanese into English entirely on your own computer: nothing
 
 4. Open `ScreenTranslator.exe`.
 
-The `.exe` is not code-signed, so Windows may show a SmartScreen warning. Click **More info**, then **Run anyway**. Some antivirus programs may also wrongly flag apps packaged with PyInstaller. If you would rather not run the packaged app, run it from source.
+The `.exe` is not code-signed, so Windows may show a SmartScreen warning. Click **More info**, then **Run anyway**. Some antivirus programs may also wrongly flag apps packaged with PyInstaller.
 
 To open the app from the Start menu or the desktop, or start it with Windows, use the `Cài đặt` (Settings) page. If you move the app folder, create these shortcuts again: untick them, save, then tick them again.
 
@@ -56,37 +56,6 @@ You can change these on the `Phím tắt` (Hotkeys) page. Every action also has 
 - It only translates from Japanese to English. The model is small and sometimes gets things wrong, especially names you have not listed.
 - OneOCR is an undocumented internal Microsoft component. A future Snipping Tool update could change its files and stop OCR from working. If that happens, the app reports an error.
 - Small text is enlarged and read a second time, which takes about twice as long.
-
-## Your data
-
-- Settings, names and terms, the translation cache and the log are stored in `%APPDATA%\ScreenTranslator`.
-- On first run, the app copies 3 OneOCR files (about 110 MB) from your own Snipping Tool to `%USERPROFILE%\.config\oneocr`.
-
-To uninstall, delete the app folder, these two folders and any shortcuts you created.
-
-## Running from source
-
-Requires [uv](https://docs.astral.sh/uv/).
-
-```bash
-uv sync
-```
-
-```bash
-uv run screen-translator
-```
-
-Run the tests:
-
-```bash
-uv run pytest
-```
-
-Build `dist/ScreenTranslator.zip`:
-
-```bash
-uv run --group build pyinstaller --noconfirm packaging/ScreenTranslator.spec
-```
 
 ## License
 

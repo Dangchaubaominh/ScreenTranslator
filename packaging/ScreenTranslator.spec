@@ -21,6 +21,7 @@ analysis = Analysis(
     [str(HERE / "entry.py")],
     pathex=[str(ROOT / "src")],
     datas=copy_metadata("screen-translator", recursive=True),  # kèm giấy phép của từng thư viện
+    excludes=["pytest", "_pytest", "pygments", "setuptools"],  # công cụ phát triển, app không cần nhưng hay bị kéo theo
 )
 pyz = PYZ(analysis.pure)
 exe = EXE(
