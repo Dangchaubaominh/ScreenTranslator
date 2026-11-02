@@ -15,6 +15,7 @@ from pathlib import Path
 
 log = logging.getLogger(__name__)
 GENDERS = {"nữ": "Female", "nam": "Male", "female": "Female", "male": "Male"}
+GENDER_WORDS = {"Female": "nữ", "Male": "nam"}  # ghi vào file
 # "Save (Quick)" không phải giới tính nên cả cụm là bản dịch; chấp nhận cả dấu ＝ gõ bằng bộ gõ tiếng Nhật
 _LINE = re.compile(r"(?P<ja>[^=＝]+?)\s*[=＝]\s*(?P<en>.+?)(?:\s*\((?P<gender>nữ|nam|female|male)\))?", re.IGNORECASE)
 
@@ -93,6 +94,45 @@ def ensure_file(path: Path) -> Path:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(TEMPLATE, encoding="utf-8")
     return path
+
+
+def clean(text: str) -> str:
+    """Chuẩn hóa chữ người dùng gõ giống parse(), để cùng chữ thì so ra bằng nhau."""
+    return unicodedata.normalize("NFC", text.strip())
+
+
+def valid_ja(ja: str) -> bool:
+    """Chữ Nhật ghi được thành một dòng của file: không có dấu bằng, không giống dòng ghi chú."""
+    return not (ja.startswith("#") or "=" in ja or "＝" in ja)
+
+
+def format_line(entry: Entry) -> str:
+    gender = f" ({GENDER_WORDS[entry.gender]})" if entry.gender else ""
+    return f"{entry.ja} = {entry.en}{gender}"
+
+
+def update_file(path: Path, before: Sequence[Entry], after: Sequence[Entry]) -> None:
+    """Ghi vào file phần đã đổi từ `before` sang `after`; không đổi gì thì không đụng tới file.
+
+    Ghi chú, dòng sai mẫu và các mục không đổi (kể cả mục vừa thêm bằng Notepad) giữ nguyên chỗ cũ. Mục mới nằm cuối file.
+    """
+    removed = {e.ja for e in before} - {e.ja for e in after}
+    changed = {e.ja: e for e in after if e not in before}
+    if not removed and not changed:
+        return
+    lines, written = [], set()
+    for line in unicodedata.normalize("NFC", ensure_file(path).read_text(encoding="utf-8-sig")).splitlines():
+        stripped = line.strip()
+        m = None if stripped.startswith("#") else _LINE.fullmatch(stripped)
+        ja = m["ja"] if m else None
+        if ja in removed or ja in written:  # mục khai hai lần: dòng sau không được đè lên bản vừa sửa
+            continue
+        if ja in changed:
+            line = format_line(changed[ja])
+            written.add(ja)
+        lines.append(line)
+    lines += [format_line(entry) for ja, entry in changed.items() if ja not in written]
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
 class Glossary:

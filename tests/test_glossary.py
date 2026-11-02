@@ -12,6 +12,7 @@ from screen_translator.glossary import (
     relevant,
     signature,
     substitute,
+    update_file,
     vntl_metadata,
 )
 
@@ -95,3 +96,61 @@ def test_ensure_file_writes_the_template_once(tmp_path):
     path.write_text("霊夢 = Reimu (nữ)\n", encoding="utf-8")
     ensure_file(path)
     assert path.read_text(encoding="utf-8") == "霊夢 = Reimu (nữ)\n"
+
+
+def test_update_file_writes_only_what_changed(tmp_path):
+    path = tmp_path / "glossary.txt"
+    original = (
+        "# ghi chú của người dùng\n"
+        "霊夢 ＝ Reimu (female)\n"  # dòng không đổi giữ nguyên cách viết
+        "魔理沙 = Marisa\n"
+        "dòng sai mẫu\n"
+        "\n"
+        "幻想郷 = Gensokyo\n"
+    )
+    path.write_text(original, encoding="utf-8")
+    before = parse(original)
+    after = [Entry("霊夢", "Reimu", "Female"), Entry("魔理沙", "Marisa", "Female"), Entry("実績", "Achievements")]
+    update_file(path, before, after)
+    assert path.read_text(encoding="utf-8") == (
+        "# ghi chú của người dùng\n"
+        "霊夢 ＝ Reimu (female)\n"
+        "魔理沙 = Marisa (nữ)\n"  # sửa tại chỗ
+        "dòng sai mẫu\n"
+        "\n"  # 幻想郷 đã xóa
+        "実績 = Achievements\n"  # mục mới nằm cuối
+    )
+    assert parse(path.read_text(encoding="utf-8")) == after
+
+
+def test_update_file_leaves_the_file_alone_when_nothing_changed(tmp_path):
+    path = tmp_path / "glossary.txt"
+    path.write_bytes(b"\xef\xbb\xbf# BOM do Notepad\r\n")  # không viết lại: giữ nguyên từng byte
+    update_file(path, [REIMU], [REIMU])
+    assert path.read_bytes() == b"\xef\xbb\xbf# BOM do Notepad\r\n"
+    missing = tmp_path / "chưa-có.txt"
+    update_file(missing, [], [])
+    assert not missing.exists()
+
+
+def test_update_file_keeps_entries_added_in_notepad_meanwhile(tmp_path):
+    path = tmp_path / "glossary.txt"
+    path.write_text("霊夢 = Reimu (nữ)\n早苗 = Sanae (nữ)\n", encoding="utf-8")  # 早苗 thêm sau khi mở bảng
+    update_file(path, [REIMU], [REIMU, GENSOKYO])
+    assert [e.ja for e in parse(path.read_text(encoding="utf-8"))] == ["霊夢", "早苗", GENSOKYO.ja]
+
+
+def test_update_file_replaces_every_line_of_an_entry_listed_twice(tmp_path):
+    path = tmp_path / "glossary.txt"
+    path.write_text("霊夢 = Reimu A\n霊夢 = Reimu B\n", encoding="utf-8")  # parse lấy dòng sau
+    update_file(path, [Entry("霊夢", "Reimu B")], [REIMU])
+    assert parse(path.read_text(encoding="utf-8")) == [REIMU]
+    update_file(path, [REIMU], [])
+    assert parse(path.read_text(encoding="utf-8")) == []
+
+
+def test_update_file_creates_the_file_with_its_instructions(tmp_path):
+    path = tmp_path / "sub" / "glossary.txt"
+    update_file(path, [], [REIMU])
+    text = path.read_text(encoding="utf-8")
+    assert text.startswith("# Tên riêng") and parse(text) == [REIMU]

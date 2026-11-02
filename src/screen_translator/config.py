@@ -10,7 +10,7 @@ from .translate import DEFAULT_MODEL
 
 APP_DIR = Path(os.environ.get("APPDATA", Path.home())) / "ScreenTranslator"
 CONFIG_PATH = APP_DIR / "config.json"
-GLOSSARY_PATH = APP_DIR / "glossary.txt"  # tên riêng, thuật ngữ: người dùng sửa bằng Notepad
+GLOSSARY_PATH = APP_DIR / "glossary.txt"  # tên riêng, thuật ngữ: sửa ở trang Tên riêng hoặc bằng Notepad
 
 # Hồ sơ hiệu năng (PLAN.md mục 7)
 PROFILES = {

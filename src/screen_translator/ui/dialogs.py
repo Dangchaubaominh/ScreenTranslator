@@ -1,38 +1,72 @@
-"""Hộp thoại sửa chữ OCR. Hướng dẫn, phím tắt, cài đặt và chỉnh màu nằm chung trong cửa sổ chính (window.py)."""
+"""Hộp thoại sửa chữ OCR. Hướng dẫn, tên riêng, phím tắt, cài đặt, chỉnh màu nằm chung trong cửa sổ chính (window.py)."""
+
+import logging
 
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QGuiApplication
-from PySide6.QtWidgets import QDialog, QHBoxLayout, QLabel, QPlainTextEdit, QPushButton, QVBoxLayout
+from PySide6.QtGui import QColor, QGuiApplication
+from PySide6.QtWidgets import QDialog, QHBoxLayout, QLabel, QLineEdit, QPlainTextEdit, QPushButton, QVBoxLayout
+
+from .. import win32
+from ..config import GLOSSARY_PATH
+from ..glossary import Entry, Glossary, clean, format_line, update_file, valid_ja
+from .window import BG, STYLE, KindBox
+
+log = logging.getLogger(__name__)
 
 
 class EditDialog(QDialog):
-    """Xem chữ OCR đọc được, sửa tay rồi dịch lại; copy chữ gốc / bản dịch."""
+    """Xem chữ OCR đọc được, sửa tay rồi dịch lại; copy chữ gốc / bản dịch; thêm nhanh một tên dịch sai vào tên riêng."""
 
     retranslate = Signal(str)
 
     def __init__(self):
         super().__init__(None, Qt.WindowType.WindowStaysOnTopHint)
         self.setWindowTitle("Sửa chữ OCR — ScreenTranslator")
-        self.resize(520, 360)
+        self.setStyleSheet(STYLE)
+        self.resize(560, 460)
+        self._glossary = Glossary(GLOSSARY_PATH)
         self._ja = QPlainTextEdit()
+        self._ja.selectionChanged.connect(self._on_selection)
         self._en = QPlainTextEdit(readOnly=True)
-        translate_button = QPushButton("Dịch lại")
-        translate_button.setDefault(True)
-        translate_button.clicked.connect(lambda: self.retranslate.emit(self._ja.toPlainText()))
-        copy_ja = QPushButton("Copy chữ Nhật")
+
+        self._term_ja = QLineEdit(placeholderText="Chữ Nhật")
+        self._term_en = QLineEdit(placeholderText="Tên đúng, tiếng Anh")
+        self._term_kind = KindBox()
+        self._term_kind.setFixedWidth(130)
+        add = QPushButton("Thêm", autoDefault=False)
+        add.clicked.connect(self._add_term)
+        for field in (self._term_ja, self._term_en):
+            field.returnPressed.connect(self._add_term)
+        self._term_message = QLabel(objectName="hint", wordWrap=True)
+        self._term_message.hide()
+        term = QHBoxLayout()
+        term.addWidget(self._term_ja, 1)
+        term.addWidget(self._term_en, 1)
+        term.addWidget(self._term_kind)
+        term.addWidget(add)
+
+        # không nút nào là nút mặc định: Enter ở hàng thêm tên chỉ để thêm tên
+        translate_button = QPushButton("Dịch lại", objectName="primary", autoDefault=False)
+        translate_button.clicked.connect(self._retranslate)
+        copy_ja = QPushButton("Copy chữ Nhật", autoDefault=False)
         copy_ja.clicked.connect(lambda: QGuiApplication.clipboard().setText(self._ja.toPlainText()))
-        copy_en = QPushButton("Copy bản dịch")
+        copy_en = QPushButton("Copy bản dịch", autoDefault=False)
         copy_en.clicked.connect(lambda: QGuiApplication.clipboard().setText(self._en.toPlainText()))
 
         buttons = QHBoxLayout()
         for button in (translate_button, copy_ja, copy_en):
             buttons.addWidget(button)
         layout = QVBoxLayout(self)
+        layout.setContentsMargins(16, 14, 16, 14)
         layout.addWidget(QLabel("Chữ tiếng Nhật (sửa được nếu OCR đọc sai):"))
         layout.addWidget(self._ja)
         layout.addWidget(QLabel("Bản dịch:"))
         layout.addWidget(self._en)
+        layout.addWidget(QLabel("Tên dịch sai: bôi đen tên đó ở ô chữ Nhật, gõ tên đúng rồi Enter."))
+        layout.addLayout(term)
+        layout.addWidget(self._term_message)
         layout.addLayout(buttons)
+        win32.dark_title_bar(int(self.winId()), QColor(BG))
 
     def set_result(self, ja: str, en: str) -> None:
         self._ja.setPlainText(ja)
@@ -40,3 +74,51 @@ class EditDialog(QDialog):
 
     def set_busy(self) -> None:
         self._en.setPlainText("Đang dịch…")
+
+    def _retranslate(self) -> None:
+        self.retranslate.emit(self._ja.toPlainText())
+
+    def _on_selection(self) -> None:
+        """Bôi đen một tên: điền vào hàng thêm tên; tên đã có thì hiện luôn bản dịch đang dùng để sửa."""
+        selected = clean("".join(self._ja.textCursor().selectedText().split()))  # bôi qua nhiều dòng thì nối lại
+        if not selected:
+            return
+        entry = self._known_term(selected)
+        self._term_ja.setText(selected)
+        self._term_en.setText(entry.en if entry else "")
+        self._term_kind.set_gender(entry.gender if entry else None)
+        self._show_term_message("")
+
+    def _known_term(self, ja: str) -> Entry | None:
+        try:
+            return next((entry for entry in self._glossary.entries() if entry.ja == ja), None)
+        except (OSError, UnicodeError):
+            return None  # lúc thêm sẽ báo lỗi: chưa cần báo khi mới bôi đen
+
+    def _add_term(self) -> None:
+        """Ghi tên vào glossary.txt và dịch lại ngay, để thấy kết quả với tên mới. Thiếu ô nào thì đưa con trỏ tới ô đó."""
+        ja, en = clean(self._term_ja.text()), clean(self._term_en.text())
+        if not ja or not en:
+            (self._term_en if ja else self._term_ja).setFocus()
+            return
+        if not valid_ja(ja):
+            self._show_term_message("Chữ Nhật không được có dấu = hay bắt đầu bằng #.", error=True)
+            return
+        entry = Entry(ja, en, self._term_kind.gender())
+        try:
+            update_file(GLOSSARY_PATH, [], [entry])
+        except (OSError, UnicodeError) as e:
+            log.exception("Không ghi được glossary")
+            self._show_term_message(f"Không ghi được {GLOSSARY_PATH.name} (cần lưu dạng UTF-8): {e}", error=True)
+            return
+        self._term_ja.clear()
+        self._term_en.clear()
+        self._term_kind.set_gender(None)
+        self._show_term_message(f"Đã lưu vào tên riêng: {format_line(entry)}")
+        if self._ja.toPlainText().strip():
+            self._retranslate()
+
+    def _show_term_message(self, text: str, *, error: bool = False) -> None:
+        self._term_message.setStyleSheet("color: #f87171; font-size: 12px;" if error else "")
+        self._term_message.setText(text)
+        self._term_message.setVisible(bool(text))

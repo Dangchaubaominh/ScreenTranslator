@@ -16,8 +16,7 @@ from PySide6.QtWidgets import QApplication, QDialog, QMenu, QSystemTrayIcon
 
 from . import capture, live, shortcuts, win32
 from . import config as config_store
-from .config import GLOSSARY_PATH, HOTKEY_LABELS, Config
-from .glossary import ensure_file
+from .config import HOTKEY_LABELS, Config
 from .hotkeys import HotkeyWindow
 from .ui.dialogs import EditDialog
 from .ui.overlay import GAP, HINT_PX, Appearance, Overlay, clamp, hint_size
@@ -127,7 +126,7 @@ class TrayApp(QObject):
             menu_action.triggered.connect(lambda *_, handler=self._handlers[action]: QTimer.singleShot(200, handler))
         self._menu_actions["live"].setCheckable(True)
         self.menu.addSeparator()
-        self.menu.addAction("Tên riêng, thuật ngữ…").triggered.connect(self.open_glossary)
+        self.menu.addAction("Tên riêng, thuật ngữ…").triggered.connect(lambda: self.open_window("glossary"))
         self.menu.addAction("Cài đặt…").triggered.connect(lambda: self.open_window("settings"))
         self.menu.addAction("Hướng dẫn…").triggered.connect(lambda: self.open_window("guide"))
         self.menu.addAction("Thoát").triggered.connect(self.quit)
@@ -552,16 +551,8 @@ class TrayApp(QObject):
         self.edit_dialog.raise_()
         self.edit_dialog.activateWindow()
 
-    def open_glossary(self) -> None:
-        """Mở glossary.txt bằng trình sửa mặc định (Notepad). Lưu xong thì lượt dịch sau dùng ngay."""
-        try:
-            os.startfile(ensure_file(GLOSSARY_PATH))
-        except OSError as e:
-            log.exception("Không mở được glossary")
-            self.notify(f"Không mở được {GLOSSARY_PATH}: {e}", warning=True)
-
     def open_window(self, page: str = "guide", *, welcome: bool = False) -> None:
-        """Cửa sổ chính (hướng dẫn, phím tắt, cài đặt, chỉnh màu), mở ở trang `page`; đang mở thì chỉ chuyển trang.
+        """Cửa sổ chính (hướng dẫn, tên riêng, phím tắt, cài đặt, chỉnh màu), mở ở trang `page`; đang mở thì chỉ chuyển trang.
 
         welcome: màn hình chào lúc mở app. Chỉ bật sẵn shortcut đang có; shortcut mới (kể cả tự chạy khi mở Windows)
         phải do người dùng tự bật.

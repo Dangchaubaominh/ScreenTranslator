@@ -1,13 +1,17 @@
-"""Cửa sổ chính của app: hướng dẫn, phím tắt, cài đặt, chỉnh màu trong một cửa sổ, chọn trang ở cột bên trái.
+"""Cửa sổ chính của app: hướng dẫn, tên riêng, phím tắt, cài đặt, chỉnh màu trong một cửa sổ, chọn trang ở cột trái.
 
 Nền tối cùng tông với thanh điều khiển. Mở lúc mở app (màn hình chào, nút "Bắt đầu") hoặc từ menu Cài đặt / Hướng dẫn.
 """
 
+import logging
+import os
 from dataclasses import replace
+from pathlib import Path
 
-from PySide6.QtCore import QPointF, QRect, QRectF, QSize, Qt
+from PySide6.QtCore import QEvent, QPointF, QRect, QRectF, QSize, Qt
 from PySide6.QtGui import QColor, QFont, QPainter, QPalette, QPen
 from PySide6.QtWidgets import (
+    QAbstractItemView,
     QButtonGroup,
     QCheckBox,
     QColorDialog,
@@ -17,31 +21,39 @@ from PySide6.QtWidgets import (
     QGridLayout,
     QGroupBox,
     QHBoxLayout,
+    QHeaderView,
     QLabel,
     QLineEdit,
     QListWidget,
     QListWidgetItem,
+    QMessageBox,
     QPushButton,
     QScrollArea,
     QSlider,
     QStackedWidget,
+    QTableWidget,
+    QTableWidgetItem,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
 
 from .. import win32
-from ..config import FONT_PX_RANGE, HOTKEY_LABELS, OCR_ENGINES, OPACITY_RANGE, PROFILES, Config
+from ..config import FONT_PX_RANGE, GLOSSARY_PATH, HOTKEY_LABELS, OCR_ENGINES, OPACITY_RANGE, PROFILES, Config
+from ..glossary import Entry, Glossary, clean, ensure_file, update_file, valid_ja
 from ..hotkeys import parse_hotkey
 from ..shortcuts import LABELS as SHORTCUT_LABELS
 from .overlay import Appearance, fit_text, paint_block
 from .panel import glyph_icon
 
+log = logging.getLogger(__name__)
 BG, SIDEBAR, CARD, BORDER = "#0f121e", "#0b0e18", "#171c2c", "#252b3d"
 CARD_MARGINS = (16, 12, 16, 12)
 NAV_ICON_PX = 20  # chia hết cho 4: ở 125% / 150% / 175% vẫn tròn điểm ảnh, nét icon không bị co giãn lệch
 TEXT, MUTED, ACCENT = "#e2e8f0", "#94a3b8", "#3b82f6"
 PAGES = {  # trang → (chữ ở cột trái, biểu tượng Segoe Fluent Icons)
     "guide": ("Hướng dẫn", ""),
+    "glossary": ("Tên riêng", ""),
     "hotkeys": ("Phím tắt", ""),
     "settings": ("Cài đặt", ""),
     "appearance": ("Chỉnh màu", ""),
@@ -76,10 +88,10 @@ QGroupBox::title {{ subcontrol-origin: margin; left: 2px; top: 0px; }}
 #key {{ background: #1e293b; border: 1px solid #334155; border-bottom: 2px solid #475569; border-radius: 5px;
         padding: 1px 7px; font-size: 12px; font-weight: bold; }}
 #step {{ background: rgba(59, 130, 246, 46); color: #93c5fd; border-radius: 11px; font-size: 12px; font-weight: bold; }}
-QComboBox, QLineEdit, QSpinBox {{ background: {SIDEBAR}; border: 1px solid #334155; border-radius: 6px;
-                                  padding: 5px 8px; selection-background-color: {ACCENT}; }}
-QComboBox:hover, QLineEdit:hover, QSpinBox:hover {{ border-color: #475569; }}
-QComboBox:focus, QLineEdit:focus, QSpinBox:focus {{ border-color: {ACCENT}; }}
+QComboBox, QLineEdit, QSpinBox, QPlainTextEdit {{ background: {SIDEBAR}; border: 1px solid #334155; border-radius: 6px;
+                                                  padding: 5px 8px; selection-background-color: {ACCENT}; }}
+QComboBox:hover, QLineEdit:hover, QSpinBox:hover, QPlainTextEdit:hover {{ border-color: #475569; }}
+QComboBox:focus, QLineEdit:focus, QSpinBox:focus, QPlainTextEdit:focus {{ border-color: {ACCENT}; }}
 QComboBox::drop-down {{ border: none; width: 28px; }}
 QComboBox::down-arrow {{ image: none; }}
 QComboBox:editable {{ padding-left: 3px; }}
@@ -102,6 +114,16 @@ QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ height: 0; }}
 QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{ background: none; }}
 QToolTip {{ background: {CARD}; color: {TEXT}; border: 1px solid #334155; }}
 QWellArray, QtPrivate--QColorShowLabel, QtPrivate--QColorPicker {{ border: 1px solid #475569; }}
+QTableWidget {{ background: {SIDEBAR}; alternate-background-color: #111522; border: 1px solid {BORDER};
+                border-radius: 6px; outline: none; }}
+QTableWidget::item {{ padding: 0 8px; }}
+QTableWidget QLineEdit {{ padding: 0 7px; border-radius: 0; }}
+QTableWidget QComboBox {{ background: transparent; border: none; border-radius: 0; padding: 0 3px; }}
+QHeaderView {{ background: transparent; }}
+QHeaderView::section {{ background: transparent; color: {MUTED}; border: none; border-bottom: 1px solid {BORDER};
+                        padding: 6px 11px; }}
+#rowdelete {{ background: transparent; border: none; }}
+#rowdelete:hover {{ background: rgba(248, 113, 113, 40); }}
 """
 
 
@@ -137,6 +159,9 @@ class Toggle(QCheckBox):
 
 class ComboBox(QComboBox):
     """Ô chọn tự vẽ mũi tên: tô QSS cho ô bo góc thì Qt bỏ mũi tên gốc, mà nút mũi tên gốc lại đè lên viền bo."""
+
+    def wheelEvent(self, event) -> None:
+        event.ignore()  # ô nằm trong trang cuộn được: lăn chuột để cuộn, không đổi nhầm lựa chọn
 
     def paintEvent(self, event) -> None:
         super().paintEvent(event)
@@ -233,6 +258,218 @@ def _slider_row(slider: QSlider, value: QLabel) -> QHBoxLayout:
     return row
 
 
+GLOSSARY_KINDS = {"Thuật ngữ": None, "Nhân vật nữ": "Female", "Nhân vật nam": "Male"}  # chữ trong ô chọn → Entry.gender
+
+
+class KindBox(ComboBox):
+    """Ô chọn loại của một mục tên riêng."""
+
+    def __init__(self):
+        super().__init__()
+        self.addItems(list(GLOSSARY_KINDS))
+
+    def gender(self) -> str | None:
+        return list(GLOSSARY_KINDS.values())[self.currentIndex()]
+
+    def set_gender(self, gender: str | None) -> None:
+        self.setCurrentIndex(list(GLOSSARY_KINDS.values()).index(gender))
+
+
+class GlossaryEditor(QWidget):
+    """Bảng các mục của glossary.txt: thêm, sửa, xóa, tìm, rồi lưu cùng các trang khác của cửa sổ.
+
+    File vẫn sửa tay được; lúc lưu chỉ ghi phần đã đổi trong bảng (glossary.update_file).
+    """
+
+    def __init__(self, path: Path):
+        super().__init__()
+        self._path = path
+        self._source = Glossary(path)
+        self._saved: list[Entry] = []  # các mục đọc được từ file lần gần nhất
+
+        self._message = _label("", "error")
+        self._message.hide()
+        self._ja = QLineEdit(placeholderText="Chữ Nhật, vd. 霊夢")
+        self._en = QLineEdit(placeholderText="Tiếng Anh, vd. Reimu")
+        self._kind = KindBox()
+        self._kind.setFixedWidth(130)
+        add = QPushButton("Thêm", autoDefault=False)
+        add.clicked.connect(self._add)
+        for field in (self._ja, self._en):
+            field.returnPressed.connect(self._add)
+        self._add_card, form = _card("Thêm mục")
+        row = QHBoxLayout()
+        row.addWidget(self._ja, 1)
+        row.addWidget(self._en, 1)
+        row.addWidget(self._kind)
+        row.addWidget(add)
+        form.addLayout(row)
+
+        self._search = QLineEdit(placeholderText="Tìm theo chữ Nhật hoặc tiếng Anh…")
+        self._search.textChanged.connect(self._filter)
+        notepad = QPushButton("Sửa bằng Notepad", autoDefault=False)
+        notepad.clicked.connect(self._open_file)
+        self._table = QTableWidget(0, 4)
+        self._table.setHorizontalHeaderLabels(["Chữ Nhật", "Tiếng Anh", "Loại", ""])
+        self._table.verticalHeader().hide()
+        self._table.verticalHeader().setDefaultSectionSize(34)
+        self._table.setShowGrid(False)
+        self._table.setAlternatingRowColors(True)
+        self._table.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
+        self._table.setMinimumHeight(150)
+        header = self._table.horizontalHeader()
+        header.setDefaultAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        header.setSectionsClickable(False)
+        header.setHighlightSections(False)
+        for column in (0, 1):
+            header.setSectionResizeMode(column, QHeaderView.ResizeMode.Stretch)
+        for column, width in ((2, 130), (3, 36)):
+            header.setSectionResizeMode(column, QHeaderView.ResizeMode.Fixed)
+            self._table.setColumnWidth(column, width)
+        card, layout = _card("Danh sách")
+        tools = QHBoxLayout()
+        tools.addWidget(self._search, 1)
+        tools.addWidget(notepad)
+        layout.addLayout(tools)
+        layout.addWidget(self._table, 1)
+        layout.addWidget(
+            _label(
+                "Bấm đúp vào ô để sửa. Nhân vật: chọn nữ / nam để bản dịch dùng đúng she / he. "
+                "Khối chữ trùng hẳn một mục (nhãn menu, tên phòng…) thì dùng luôn bản dịch ở đây, không qua model.",
+                "hint",
+            )
+        )
+
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(4)
+        outer.addWidget(self._message)
+        outer.addWidget(self._add_card)
+        outer.addWidget(card, 1)
+        self.refresh()
+
+    def _rows(self) -> list[Entry]:
+        table = self._table
+        return [
+            Entry(clean(table.item(r, 0).text()), clean(table.item(r, 1).text()), table.cellWidget(r, 2).gender())
+            for r in range(table.rowCount())
+        ]
+
+    def _set_row(self, row: int, entry: Entry) -> None:
+        self._table.item(row, 0).setText(entry.ja)
+        self._table.item(row, 1).setText(entry.en)
+        self._table.cellWidget(row, 2).set_gender(entry.gender)
+
+    def _append_row(self, entry: Entry) -> int:
+        row = self._table.rowCount()
+        self._table.insertRow(row)
+        ja_item = QTableWidgetItem()
+        self._table.setItem(row, 0, ja_item)
+        self._table.setItem(row, 1, QTableWidgetItem())
+        self._table.setCellWidget(row, 2, KindBox())
+        remove = QToolButton(objectName="rowdelete", toolTip="Xóa mục này")
+        remove.setIcon(glyph_icon("", 16, QColor(MUTED)))
+        remove.clicked.connect(lambda: self._table.removeRow(self._table.row(ja_item)))
+        self._table.setCellWidget(row, 3, remove)
+        self._set_row(row, entry)
+        return row
+
+    def _form_text(self) -> str:
+        return self._ja.text().strip() + self._en.text().strip()
+
+    def _add(self) -> None:
+        """Thêm mục đang gõ; chữ Nhật đã có trong bảng thì sửa dòng đó. Thiếu ô nào thì đưa con trỏ tới ô đó."""
+        ja, en = clean(self._ja.text()), clean(self._en.text())
+        if not ja or not en:
+            (self._en if ja else self._ja).setFocus()
+            return
+        self._search.clear()
+        entry = Entry(ja, en, self._kind.gender())
+        row = next((i for i, old in enumerate(self._rows()) if old.ja == ja), None)
+        if row is None:
+            row = self._append_row(entry)
+        else:
+            self._set_row(row, entry)
+        self._table.scrollToItem(self._table.item(row, 0))
+        self._ja.clear()
+        self._en.clear()
+        self._kind.setCurrentIndex(0)
+        self._ja.setFocus()
+
+    def _filter(self, text: str) -> None:
+        needle = text.strip().casefold()
+        for row, entry in enumerate(self._rows()):
+            self._table.setRowHidden(row, needle not in f"{entry.ja}\n{entry.en}".casefold())
+
+    def _open_file(self) -> None:
+        try:
+            os.startfile(ensure_file(self._path))
+        except OSError as e:
+            log.exception("Không mở được glossary")
+            self._show_message(f"Không mở được {self._path}: {e}")
+
+    def _show_message(self, text: str) -> None:
+        self._message.setText(text)
+        self._message.setVisible(bool(text))
+
+    def refresh(self) -> None:
+        """Đọc lại file (lúc mở, lúc quay lại cửa sổ sau khi sửa bằng Notepad). Bảng có thay đổi chưa lưu thì giữ nguyên."""
+        if self.dirty():
+            return
+        try:
+            entries = list(self._source.entries())
+        except (OSError, UnicodeError) as e:
+            log.warning("Không đọc được glossary: %s", e)
+            self._set_readable(False)
+            self._show_message(f"Không đọc được {self._path.name}. Mở bằng Notepad, lưu dạng UTF-8 rồi quay lại đây.")
+            return
+        self._set_readable(True)
+        self._show_message("")
+        if entries != self._saved:
+            self._saved = entries
+            self._table.setRowCount(0)
+            for entry in entries:
+                self._append_row(entry)
+            self._filter(self._search.text())
+
+    def _set_readable(self, readable: bool) -> None:
+        for widget in (self._add_card, self._search, self._table):
+            widget.setEnabled(readable)
+
+    def entries(self) -> list[Entry]:
+        return [entry for entry in self._rows() if entry.ja or entry.en]  # xóa trắng cả hai ô thì coi như xóa dòng
+
+    def dirty(self) -> bool:
+        return bool(self._form_text()) or set(self.entries()) != set(self._saved)
+
+    def problem(self) -> str | None:
+        """Lỗi cần sửa trước khi lưu, None nếu ổn. Mục đã gõ ở ô thêm mà quên bấm Thêm thì thêm luôn."""
+        if self._form_text():
+            self._add()
+            if self._form_text():
+                return f"Mục mới còn thiếu {'tiếng Anh' if self._ja.text().strip() else 'chữ Nhật'}."
+        seen = set()
+        for row, entry in enumerate(self._rows()):
+            if not entry.ja and not entry.en:
+                continue
+            if not entry.ja or not entry.en:
+                message = f"Dòng {row + 1}: thiếu {'tiếng Anh' if entry.ja else 'chữ Nhật'}."
+            elif not valid_ja(entry.ja):
+                message = f"Dòng {row + 1}: chữ Nhật không được có dấu = hay bắt đầu bằng #."
+            elif entry.ja in seen:
+                message = f"「{entry.ja}」đang có hai dòng."
+            else:
+                seen.add(entry.ja)
+                continue
+            self._search.clear()
+            self._table.setCurrentCell(row, 0)
+            return message
+        return None
+
+    def save(self) -> None:
+        update_file(self._path, self._saved, self.entries())
+
+
 class MainWindow(QDialog):
     """welcome: màn hình chào lúc mở app, nút chính là "Bắt đầu". `startup`: shortcut nào đang có (None: chưa có exe).
 
@@ -274,10 +511,12 @@ class MainWindow(QDialog):
             self._profile.addItem(profile["label"], key)
         self._profile.setCurrentIndex(self._profile.findData(config.profile))
         self.startup = StartupOptions(startup)
+        self.glossary = GlossaryEditor(GLOSSARY_PATH)
 
         self._pages = QStackedWidget()
         builders = {
             "guide": self._guide_page,
+            "glossary": self._glossary_page,
             "hotkeys": self._hotkeys_page,
             "settings": self._settings_page,
             "appearance": self._appearance_page,
@@ -342,7 +581,8 @@ class MainWindow(QDialog):
 
     # --- các trang ---
 
-    def _page(self, title: str, subtitle: str, *items: QWidget) -> QScrollArea:
+    def _page(self, title: str, subtitle: str, *items: QWidget, fill: bool = False) -> QScrollArea:
+        """fill: mục cuối chiếm hết chỗ còn lại (bảng tự cuộn bên trong)."""
         page = QWidget(objectName="page")
         layout = QVBoxLayout(page)
         layout.setContentsMargins(28, 24, 28, 20)
@@ -352,7 +592,10 @@ class MainWindow(QDialog):
         layout.addSpacing(6)
         for item in items:
             layout.addWidget(item)
-        layout.addStretch()
+        if fill:
+            layout.setStretchFactor(items[-1], 1)
+        else:
+            layout.addStretch()
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setWidget(page)
@@ -385,7 +628,7 @@ class MainWindow(QDialog):
         for text in (
             "<b>Esc</b> xóa bản dịch đang hiện (bấm lần nữa thì game nhận Esc).",
             "Xem chữ Nhật gốc: kéo thanh <b>Trong suốt</b>, hoặc bấm nút ẩn / hiện bản dịch trên thanh.",
-            "Tên nhân vật dịch sai: menu <b>…</b> → <i>Tên riêng, thuật ngữ</i>.",
+            "Tên dịch sai: menu <b>…</b> → <i>Sửa chữ OCR gần nhất</i>, bôi đen tên rồi gõ tên đúng.",
             "Chơi mà không dịch: menu <b>…</b> → <i>Tạm dừng</i> trả phím tắt cho game, gỡ model khỏi card đồ họa.",
             "Icon <b>訳</b> ở khay hệ thống: chuột trái ẩn / hiện thanh điều khiển, chuột phải mở menu.",
             "Mở app từ menu Start, Desktop hay tự chạy cùng Windows: trang <b>Cài đặt</b> → <i>Mở app</i>.",
@@ -416,6 +659,14 @@ class MainWindow(QDialog):
                 ],
             ),
             tips,
+        )
+
+    def _glossary_page(self) -> QScrollArea:
+        return self._page(
+            "Tên riêng",
+            "Tên nhân vật và thuật ngữ, để model dịch luôn đúng một kiểu. Lưu xong, lần dịch sau dùng ngay.",
+            self.glossary,
+            fill=True,
         )
 
     def _hotkeys_page(self) -> QScrollArea:
@@ -522,7 +773,37 @@ class MainWindow(QDialog):
     def keyPressEvent(self, event) -> None:
         if self.welcome and event.key() == Qt.Key.Key_Escape:
             return
+        if self.current_page() == "glossary" and event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+            return  # trang này gõ liên tục, Enter dùng để thêm mục chứ không phải bấm Lưu
         super().keyPressEvent(event)
+
+    def changeEvent(self, event) -> None:
+        super().changeEvent(event)
+        if event.type() == QEvent.Type.ActivationChange and self.isActiveWindow():
+            self.glossary.refresh()
+
+    def reject(self) -> None:
+        """Đóng mà chưa lưu tên riêng thì hỏi lại: gõ cả danh sách tên rồi mất vì lỡ tay thì tiếc."""
+        if self.glossary.dirty():
+            answer = self._ask_unsaved()
+            if answer == "save":
+                self._validate()
+            if answer != "discard":
+                return
+        super().reject()
+
+    def _ask_unsaved(self) -> str:
+        box = QMessageBox(
+            QMessageBox.Icon.NoIcon, "ScreenTranslator", "Bạn đã sửa tên riêng nhưng chưa lưu.", parent=self
+        )
+        answers = {
+            box.addButton("Lưu", QMessageBox.ButtonRole.AcceptRole): "save",
+            box.addButton("Không lưu", QMessageBox.ButtonRole.DestructiveRole): "discard",
+            box.addButton("Ở lại", QMessageBox.ButtonRole.RejectRole): "stay",
+        }
+        win32.dark_title_bar(int(box.winId()), QColor(BG))
+        box.exec()
+        return answers[box.clickedButton()]
 
     def _pick_color(self) -> None:
         # ô "Custom colors" (2 hàng, đánh số theo cột): hàng trên là các màu có sẵn, ô thừa cùng màu thẻ
@@ -573,6 +854,15 @@ class MainWindow(QDialog):
             return
         if not self._model.currentText().strip():
             self._fail("settings", "Chưa chọn model dịch.")
+            return
+        if problem := self.glossary.problem():
+            self._fail("glossary", problem)
+            return
+        try:
+            self.glossary.save()
+        except (OSError, UnicodeError) as e:
+            log.exception("Không lưu được glossary")
+            self._fail("glossary", f"Không lưu được tên riêng: {e}")
             return
         self.accept()
 

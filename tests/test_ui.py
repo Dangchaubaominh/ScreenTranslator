@@ -1,13 +1,18 @@
 import os
 
+import pytest
 from conftest import wait_until
 from PIL import Image
-from PySide6.QtCore import QObject, QPoint, QRect, Qt, Signal
+from PySide6.QtCore import QObject, QPoint, QPointF, QRect, Qt, QTimer, Signal
+from PySide6.QtGui import QTextCursor, QWheelEvent
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QDialog, QLabel, QLineEdit, QMenu, QPushButton, QSystemTrayIcon
+from PySide6.QtWidgets import QApplication, QDialog, QLabel, QLineEdit, QMenu, QPushButton, QSystemTrayIcon
 
 from screen_translator import app as app_module
 from screen_translator.config import Config
+from screen_translator.glossary import Entry
+from screen_translator.ui import dialogs as dialogs_module
+from screen_translator.ui import window as window_module
 from screen_translator.ui.overlay import (
     GAP,
     MAX_PX,
@@ -19,7 +24,7 @@ from screen_translator.ui.overlay import (
 )
 from screen_translator.ui.panel import ControlPanel
 from screen_translator.ui.region_selector import RegionSelector
-from screen_translator.ui.window import SWATCHES, MainWindow
+from screen_translator.ui.window import GLOSSARY_KINDS, SWATCHES, MainWindow
 from screen_translator.worker import READY, Item
 
 LONG_TEXT = "This is a rather long translated sentence that has to wrap over several lines. " * 4
@@ -167,6 +172,12 @@ def test_escape_and_right_click_cancel_once(qapp):
     selector, events = make_selector(qapp)
     QTest.mouseClick(selector, Qt.MouseButton.RightButton, Qt.KeyboardModifier.NoModifier, QPoint(10, 10))
     assert events == {"selected": [], "cancelled": 1}
+
+
+@pytest.fixture(autouse=True)
+def temporary_glossary(monkeypatch, tmp_path):
+    monkeypatch.setattr(window_module, "GLOSSARY_PATH", tmp_path / "glossary.txt")
+    monkeypatch.setattr(dialogs_module, "GLOSSARY_PATH", tmp_path / "glossary.txt")
 
 
 def settings_dialog(qapp, **hotkeys: str):
@@ -393,14 +404,301 @@ def test_live_mode_sends_one_frame_at_a_time_and_follows_results(qapp, monkeypat
     tray_app.hotkeys.clear()
 
 
-def test_glossary_menu_creates_and_opens_the_file(qapp, monkeypatch, tmp_path):
+def test_glossary_menu_opens_its_page(qapp, monkeypatch):
     tray_app, _ = make_tray_app(monkeypatch)
-    path, opened = tmp_path / "glossary.txt", []
-    monkeypatch.setattr(app_module, "GLOSSARY_PATH", path)
-    monkeypatch.setattr(app_module.os, "startfile", opened.append)
-    tray_app.open_glossary()
-    assert opened == [path] and path.read_text(encoding="utf-8").startswith("# Tên riêng")
+    next(a for a in tray_app.menu.actions() if a.text().startswith("Tên riêng")).trigger()
+    assert tray_app.window.current_page() == "glossary" and not tray_app.window.welcome
+    tray_app.window.reject()
     tray_app.hotkeys.clear()
+
+
+def edit_dialog(text: str) -> tuple[dialogs_module.EditDialog, list[str]]:
+    dialog, sent = dialogs_module.EditDialog(), []
+    dialog.retranslate.connect(sent.append)
+    dialog.set_result(text, "Dream's room")
+    dialog.show()
+    return dialog, sent
+
+
+def select(dialog: dialogs_module.EditDialog, start: int, end: int) -> None:
+    cursor = dialog._ja.textCursor()
+    cursor.setPosition(start)
+    cursor.setPosition(end, QTextCursor.MoveMode.KeepAnchor)
+    dialog._ja.setTextCursor(cursor)
+
+
+def test_edit_dialog_adds_a_selected_name_and_translates_again(qapp, tmp_path):
+    dialog, sent = edit_dialog("霊夢の部屋")
+    select(dialog, 0, 2)
+    assert dialog._term_ja.text() == "霊夢" and dialog._term_en.text() == ""
+    dialog._term_en.setText(" Reimu ")
+    dialog._term_kind.set_gender("Female")
+    QTest.keyClick(dialog._term_en, Qt.Key.Key_Return)
+    assert (tmp_path / "glossary.txt").read_text(encoding="utf-8").endswith("霊夢 = Reimu (nữ)\n")
+    assert sent == ["霊夢の部屋"]  # đúng một lần: Enter không kích thêm nút Dịch lại
+    assert dialog._term_ja.text() == dialog._term_en.text() == "" and dialog._term_kind.gender() is None
+    assert "霊夢 = Reimu (nữ)" in dialog._term_message.text() and dialog._term_message.isVisible()
+    assert dialog.isVisible()
+    dialog.done(0)
+
+
+def test_edit_dialog_shows_and_updates_a_known_name(qapp, tmp_path):
+    path = tmp_path / "glossary.txt"
+    path.write_text("# ghi chú\n霊夢 = Reimu (nữ)\n実績 = Achievements\n", encoding="utf-8")
+    dialog, _ = edit_dialog("霊夢の実績")
+    select(dialog, 0, 2)
+    assert dialog._term_en.text() == "Reimu" and dialog._term_kind.gender() == "Female"
+    select(dialog, 3, 5)  # đổi sang tên khác: không còn tên cũ trong ô
+    assert dialog._term_en.text() == "Achievements" and dialog._term_kind.gender() is None
+    select(dialog, 0, 2)
+    dialog._term_en.setText("Reimu Hakurei")
+    dialog._add_term()
+    assert path.read_text(encoding="utf-8") == "# ghi chú\n霊夢 = Reimu Hakurei (nữ)\n実績 = Achievements\n"
+    dialog.set_result("霊夢の実績", "Reimu Hakurei's achievements")  # kết quả dịch lại về: chữ được đặt lại
+    select(dialog, 0, 2)
+    assert dialog._term_en.text() == "Reimu Hakurei"  # đọc lại file vừa ghi
+    dialog.done(0)
+
+
+def test_edit_dialog_clearing_a_selection_keeps_what_was_typed(qapp):
+    dialog, _ = edit_dialog("霊夢\nの部屋")
+    select(dialog, 0, 5)  # bôi qua hai dòng: tên nối lại, không có ký tự xuống dòng
+    assert dialog._term_ja.text() == "霊夢の部"
+    dialog._term_en.setText("Reimu")
+    select(dialog, 1, 1)
+    assert dialog._term_ja.text() == "霊夢の部" and dialog._term_en.text() == "Reimu"
+    dialog.done(0)
+
+
+def test_edit_dialog_needs_both_fields_and_a_valid_name(qapp, tmp_path):
+    dialog, sent = edit_dialog("霊夢の部屋")
+    dialog._term_ja.setText("霊夢")
+    dialog._add_term()
+    dialog._term_ja.setText("a=b")
+    dialog._term_en.setText("Reimu")
+    dialog._add_term()
+    assert "dấu =" in dialog._term_message.text() and dialog._term_ja.text() == "a=b"
+    assert not (tmp_path / "glossary.txt").exists() and sent == []
+    dialog.done(0)
+
+
+def test_edit_dialog_reports_an_unreadable_glossary_and_leaves_it_alone(qapp, tmp_path):
+    path = tmp_path / "glossary.txt"
+    bad = "霊夢 = Reimu".encode("shift_jis")
+    path.write_bytes(bad)
+    dialog, sent = edit_dialog("霊夢の部屋")
+    select(dialog, 0, 2)  # bôi đen vẫn được, chỉ không tra được tên cũ
+    assert dialog._term_ja.text() == "霊夢" and dialog._term_en.text() == ""
+    dialog._term_en.setText("Reimu")
+    dialog._add_term()
+    assert "UTF-8" in dialog._term_message.text() and dialog._term_ja.text() == "霊夢"  # không mất chữ đã gõ
+    assert path.read_bytes() == bad and sent == []
+    dialog.done(0)
+
+
+def test_edit_dialog_with_nothing_to_translate_only_saves_the_name(qapp, tmp_path):
+    dialog, sent = edit_dialog("")
+    dialog._term_ja.setText("霊夢")
+    dialog._term_en.setText("Reimu")
+    dialog._add_term()
+    assert "霊夢 = Reimu" in (tmp_path / "glossary.txt").read_text(encoding="utf-8") and sent == []
+    dialog.done(0)
+
+
+def glossary_window(qapp, tmp_path, text: str | None = None) -> MainWindow:
+    if text is not None:
+        (tmp_path / "glossary.txt").write_text(text, encoding="utf-8")
+    window = MainWindow(Config(), ["a:1b"])
+    window.show_page("glossary")
+    window.show()
+    return window
+
+
+def add_entry(window: MainWindow, ja: str, en: str, kind: str = "Thuật ngữ") -> None:
+    window.glossary._ja.setText(ja)
+    window.glossary._en.setText(en)
+    window.glossary._kind.setCurrentText(kind)
+    window.glossary._add()
+
+
+def test_glossary_page_adds_edits_and_removes_entries(qapp, tmp_path):
+    window = glossary_window(qapp, tmp_path, "# ghi chú\n霊夢 = Reimu (nữ)\n幻想郷 = Gensokyo\n")
+    editor, table = window.glossary, window.glossary._table
+    assert editor.entries() == [Entry("霊夢", "Reimu", "Female"), Entry("幻想郷", "Gensokyo")] and not editor.dirty()
+
+    add_entry(window, " 魔理沙 ", "Marisa", "Nhân vật nữ")  # thêm: ô nhập trống lại, chờ mục sau
+    assert editor.entries()[-1] == Entry("魔理沙", "Marisa", "Female") and editor.dirty()
+    assert editor._ja.text() == "" and editor._kind.currentText() == "Thuật ngữ"
+    add_entry(window, "霊夢", "Reimu Hakurei", "Nhân vật nữ")  # chữ Nhật đã có: sửa dòng đó
+    assert table.rowCount() == 3 and table.item(0, 1).text() == "Reimu Hakurei"
+
+    table.item(2, 1).setText("Marisa Kirisame")  # sửa trong bảng
+    table.cellWidget(1, 3).click()  # nút xóa của 幻想郷
+    assert [e.ja for e in editor.entries()] == ["霊夢", "魔理沙"]
+
+    window.findChild(QPushButton, "primary").click()
+    assert window.result() == QDialog.DialogCode.Accepted
+    assert (tmp_path / "glossary.txt").read_text(encoding="utf-8") == (
+        "# ghi chú\n霊夢 = Reimu Hakurei (nữ)\n魔理沙 = Marisa Kirisame (nữ)\n"
+    )
+
+
+def test_glossary_search_hides_other_rows(qapp, tmp_path):
+    window = glossary_window(qapp, tmp_path, "霊夢 = Reimu (nữ)\n魔理沙 = Marisa (nữ)\n幻想郷 = Gensokyo\n")
+    editor, table = window.glossary, window.glossary._table
+    shown = lambda: [table.item(r, 0).text() for r in range(table.rowCount()) if not table.isRowHidden(r)]
+    editor._search.setText("MARI")
+    assert shown() == ["魔理沙"]
+    editor._search.setText("幻想")
+    assert shown() == ["幻想郷"]
+    add_entry(window, "早苗", "Sanae")  # mục vừa thêm phải thấy được ngay
+    assert editor._search.text() == "" and len(shown()) == 4
+
+
+def test_glossary_enter_adds_instead_of_closing_the_window(qapp, tmp_path):
+    window = glossary_window(qapp, tmp_path)
+    editor = window.glossary
+    editor._ja.setText("霊夢")
+    QTest.keyClick(editor._ja, Qt.Key.Key_Return)  # thiếu tiếng Anh: chuyển sang ô đó, chưa thêm
+    assert window.isVisible() and editor.entries() == []
+    editor._en.setText("Reimu")
+    QTest.keyClick(editor._en, Qt.Key.Key_Return)
+    assert window.isVisible() and editor.entries() == [Entry("霊夢", "Reimu")]
+    QTest.keyClick(editor._search, Qt.Key.Key_Return)  # ô tìm kiếm cũng không được bấm nhầm Lưu
+    assert window.isVisible()
+    window.done(0)
+
+
+@pytest.mark.parametrize(
+    ("change", "message"),
+    [
+        (lambda table: table.item(0, 1).setText(""), "Dòng 1: thiếu tiếng Anh"),
+        (lambda table: table.item(1, 0).setText(""), "Dòng 2: thiếu chữ Nhật"),
+        (lambda table: table.item(1, 0).setText("霊夢"), "hai dòng"),
+        (lambda table: table.item(1, 0).setText("a=b"), "dấu ="),
+        (lambda table: table.item(1, 0).setText("#魔理沙"), "bắt đầu bằng #"),
+    ],
+)
+def test_glossary_problems_stop_the_save_on_its_page(qapp, tmp_path, change, message):
+    text = "霊夢 = Reimu (nữ)\n魔理沙 = Marisa (nữ)\n"
+    window = glossary_window(qapp, tmp_path, text)
+    change(window.glossary._table)
+    window.show_page("hotkeys")
+    window.findChild(QPushButton, "primary").click()
+    assert window.isVisible() and window.current_page() == "glossary" and message in window._error.text()
+    assert (tmp_path / "glossary.txt").read_text(encoding="utf-8") == text
+    window.done(0)
+
+
+def test_glossary_blank_row_counts_as_removed(qapp, tmp_path):
+    window = glossary_window(qapp, tmp_path, "霊夢 = Reimu (nữ)\n魔理沙 = Marisa (nữ)\n")
+    window.glossary._table.item(0, 0).setText("")
+    window.glossary._table.item(0, 1).setText("")
+    window.findChild(QPushButton, "primary").click()
+    assert (tmp_path / "glossary.txt").read_text(encoding="utf-8") == "魔理沙 = Marisa (nữ)\n"
+
+
+def test_glossary_saves_what_was_typed_but_not_added(qapp, tmp_path):
+    window = glossary_window(qapp, tmp_path)
+    window.glossary._ja.setText("霊夢")  # thiếu tiếng Anh: báo lỗi, không mất chữ đã gõ
+    window.findChild(QPushButton, "primary").click()
+    assert window.isVisible() and "thiếu tiếng Anh" in window._error.text() and window.glossary._ja.text() == "霊夢"
+    window.glossary._en.setText("Reimu")  # đủ cả hai: tự thêm rồi lưu
+    window.findChild(QPushButton, "primary").click()
+    assert not window.isVisible()
+    assert "霊夢 = Reimu" in (tmp_path / "glossary.txt").read_text(encoding="utf-8")
+
+
+def test_saving_without_glossary_changes_does_not_touch_the_file(qapp, tmp_path):
+    window = glossary_window(qapp, tmp_path)
+    window.findChild(QPushButton, "primary").click()
+    assert window.result() == QDialog.DialogCode.Accepted and not (tmp_path / "glossary.txt").exists()
+
+
+@pytest.mark.parametrize(
+    ("answer", "closed", "saved"),
+    [("save", True, True), ("discard", True, False), ("stay", False, False)],
+)
+def test_closing_with_unsaved_glossary_asks_first(qapp, monkeypatch, tmp_path, answer, closed, saved):
+    window = glossary_window(qapp, tmp_path)
+    asked = []
+    monkeypatch.setattr(window, "_ask_unsaved", lambda: asked.append(True) or answer)
+    window.reject()  # chưa sửa gì: đóng luôn, không hỏi
+    assert not asked and not window.isVisible()
+
+    window.show()
+    add_entry(window, "霊夢", "Reimu")
+    window.close()  # nút ✕ cũng đi qua reject
+    assert asked == [True] and window.isVisible() != closed
+    assert (tmp_path / "glossary.txt").exists() == saved
+    window.done(0)
+
+
+@pytest.mark.parametrize(("label", "answer"), [("Lưu", "save"), ("Không lưu", "discard"), ("Ở lại", "stay")])
+def test_unsaved_question_returns_the_button_clicked(qapp, tmp_path, label, answer):
+    window = glossary_window(qapp, tmp_path)
+
+    def click() -> None:
+        box = QApplication.activeModalWidget()
+        next(b for b in box.buttons() if b.text() == label).click()
+
+    QTimer.singleShot(0, click)
+    assert window._ask_unsaved() == answer
+    window.done(0)
+
+
+def test_glossary_follows_the_file_edited_in_notepad(qapp, monkeypatch, tmp_path):
+    window = glossary_window(qapp, tmp_path)
+    path, opened = tmp_path / "glossary.txt", []
+    monkeypatch.setattr(window_module.os, "startfile", opened.append)
+    next(b for b in window.glossary.findChildren(QPushButton) if b.text() == "Sửa bằng Notepad").click()
+    assert opened == [path] and path.read_text(encoding="utf-8").startswith("# Tên riêng")  # tạo file kèm hướng dẫn
+
+    with path.open("a", encoding="utf-8") as file:
+        file.write("霊夢 = Reimu (nữ)\n")
+    window.glossary.refresh()  # quay lại cửa sổ
+    assert window.glossary.entries() == [Entry("霊夢", "Reimu", "Female")] and not window.glossary.dirty()
+
+    add_entry(window, "幻想郷", "Gensokyo")
+    with path.open("a", encoding="utf-8") as file:
+        file.write("早苗 = Sanae (nữ)\n")
+    window.glossary.refresh()  # đang có thay đổi chưa lưu: giữ bảng; lúc lưu vẫn không mất 早苗
+    assert [e.ja for e in window.glossary.entries()] == ["霊夢", "幻想郷"]
+    window.findChild(QPushButton, "primary").click()
+    assert path.read_text(encoding="utf-8").endswith("霊夢 = Reimu (nữ)\n早苗 = Sanae (nữ)\n幻想郷 = Gensokyo\n")
+
+
+def test_unreadable_glossary_is_reported_and_left_alone(qapp, tmp_path):
+    path = tmp_path / "glossary.txt"
+    bad = "霊夢 = Reimu".encode("shift_jis")  # Notepad lưu nhầm kiểu ANSI
+    path.write_bytes(bad)
+    window = glossary_window(qapp, tmp_path)
+    editor = window.glossary
+    assert "UTF-8" in editor._message.text() and editor._message.isVisible() and not editor._table.isEnabled()
+    window.findChild(QPushButton, "primary").click()
+    assert not window.isVisible() and path.read_bytes() == bad  # vẫn lưu được các trang khác, không đè lên file
+
+    path.write_text("霊夢 = Reimu\n", encoding="utf-8")  # sửa xong quay lại
+    editor.refresh()
+    assert editor._table.isEnabled() and editor._message.text() == "" and editor.entries() == [Entry("霊夢", "Reimu")]
+
+
+def test_glossary_kind_box_does_not_change_on_wheel(qapp, tmp_path):
+    window = glossary_window(qapp, tmp_path, "霊夢 = Reimu (nữ)\n")
+    box = window.glossary._table.cellWidget(0, 2)
+    assert box.currentText() == next(k for k, v in GLOSSARY_KINDS.items() if v == "Female")
+    event = QWheelEvent(
+        QPointF(5, 5),
+        QPointF(5, 5),
+        QPoint(0, 0),
+        QPoint(0, -120),
+        Qt.MouseButton.NoButton,
+        Qt.KeyboardModifier.NoModifier,
+        Qt.ScrollPhase.NoScrollPhase,
+        False,
+    )
+    QApplication.sendEvent(box, event)
+    assert box.currentIndex() == list(GLOSSARY_KINDS.values()).index("Female")
 
 
 def test_window_translation_puts_each_block_over_its_own_text(qapp, monkeypatch):
