@@ -21,7 +21,6 @@ class TranslationCache:
             path.parent.mkdir(parents=True, exist_ok=True)
         self._db = sqlite3.connect(path)
         with self._db:
-            self._db.execute("DROP TABLE IF EXISTS translations")  # bảng cũ, chưa có cột glossary
             self._db.execute(
                 "CREATE TABLE IF NOT EXISTS translations_v2"
                 " (model TEXT, ja TEXT, glossary TEXT, en TEXT, PRIMARY KEY (model, ja, glossary))"

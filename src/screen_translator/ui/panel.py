@@ -4,7 +4,7 @@ Luôn trên cùng, kéo đi đâu cũng được (nắm vào chỗ trống trên
 (WindowDoesNotAcceptFocus), và thanh không lọt vào ảnh chụp nên không bị đọc nhầm thành chữ cần dịch.
 """
 
-from PySide6.QtCore import QPoint, QRect, QSize, Qt, Signal
+from PySide6.QtCore import QPoint, QRect, QSignalBlocker, QSize, Qt, Signal
 from PySide6.QtGui import QColor, QFont, QGuiApplication, QIcon, QPainter, QPixmap
 from PySide6.QtWidgets import (
     QBoxLayout,
@@ -153,7 +153,7 @@ class ControlPanel(QWidget):
         outer.setContentsMargins(0, 0, 0, 0)
         outer.addWidget(self._frame)
         self.set_vertical(vertical)
-        self.excluded_from_capture = win32.exclude_from_capture(int(self.winId()))
+        win32.exclude_from_capture(int(self.winId()))
 
     def set_vertical(self, vertical: bool) -> None:
         """Xếp các nút thành một hàng ngang (để ở mép trên màn hình) hay một cột dọc (mép trái / phải)."""
@@ -165,6 +165,7 @@ class ControlPanel(QWidget):
         layout.setSpacing(2)
         actions = [self.buttons[action] for action in ("select", "screen", "repeat", "live")]
         transparency = [self._transparency_label, self.transparency, self.transparency_value]
+        tail = [self.buttons[action] for action in ("toggle", "orient", "menu", "close")]
         if vertical:
             layout.addLayout(_row([self._grip, self.status]))
             for button in actions:
@@ -173,9 +174,8 @@ class ControlPanel(QWidget):
             layout.addWidget(self._transparency_label)
             layout.addLayout(_row(transparency[1:]))
             layout.addWidget(_separator(vertical))
-            layout.addLayout(_row([self.buttons[action] for action in ("toggle", "orient", "menu", "close")]))
+            layout.addLayout(_row(tail))
         else:
-            tail = [self.buttons[action] for action in ("toggle", "orient", "menu", "close")]
             sections = [[self._grip, self.status, *actions], transparency, tail]
             for i, section in enumerate(sections):
                 if i:
@@ -196,8 +196,7 @@ class ControlPanel(QWidget):
         orient.setToolTip("Xếp thanh nằm ngang" if vertical else "Xếp thanh thành cột dọc")
         # tính lại layout ngay (bình thường Qt để tới vòng sự kiện sau), không thì cỡ cũ chặn thanh co lại
         self._frame.layout().activate()
-        if self.layout() is not None:
-            self.layout().activate()
+        self.layout().activate()
         self.resize(self.sizeHint())  # không dùng adjustSize: nó ép cửa sổ rộng ít nhất 200 px
 
     def set_hotkeys(self, hotkeys: dict[str, str]) -> None:
@@ -210,9 +209,8 @@ class ControlPanel(QWidget):
         self.buttons["live"].setChecked(live)
         for action in ("select", "screen", "repeat", "live", "toggle"):
             self.buttons[action].setEnabled(not paused)
-        self.transparency.blockSignals(True)
-        self.transparency.setValue(transparency)
-        self.transparency.blockSignals(False)
+        with QSignalBlocker(self.transparency):
+            self.transparency.setValue(transparency)
         self.transparency_value.setText(f"{transparency}%")
 
     def set_status(self, icon: QIcon, text: str) -> None:

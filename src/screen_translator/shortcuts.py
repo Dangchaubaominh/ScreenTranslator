@@ -20,7 +20,7 @@ LABELS = {
     "autostart": "Tự chạy khi mở Windows",
 }
 ICON_PATH = APP_DIR / "icon.ico"
-AUTOSTART_ARG = "--autostart"  # chạy lúc mở Windows thì không hiện thông báo khởi động
+AUTOSTART_ARG = "--autostart"  # chạy lúc mở Windows thì chỉ có icon ở khay, không mở cửa sổ
 DESCRIPTION = "Dịch chữ tiếng Nhật trên màn hình"
 
 # Tạo .lnk bằng IShellLinkW của Windows qua ctypes. WScript.Shell (PowerShell) không nhận đường dẫn có

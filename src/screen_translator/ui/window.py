@@ -275,6 +275,38 @@ class KindBox(ComboBox):
         self.setCurrentIndex(list(GLOSSARY_KINDS.values()).index(gender))
 
 
+class TermForm(QHBoxLayout):
+    """Hàng thêm một tên riêng: chữ Nhật, tiếng Anh, loại, nút Thêm. Enter ở hai ô chữ cũng là bấm Thêm."""
+
+    def __init__(self, ja_hint: str, en_hint: str, on_add):
+        super().__init__()
+        self.ja = QLineEdit(placeholderText=ja_hint)
+        self.en = QLineEdit(placeholderText=en_hint)
+        self.kind = KindBox()
+        self.kind.setFixedWidth(130)
+        add = QPushButton("Thêm", autoDefault=False)
+        add.clicked.connect(on_add)
+        for field in (self.ja, self.en):
+            field.returnPressed.connect(on_add)
+        self.addWidget(self.ja, 1)
+        self.addWidget(self.en, 1)
+        self.addWidget(self.kind)
+        self.addWidget(add)
+
+    def entry(self) -> Entry | None:
+        """Mục đang gõ. Thiếu ô nào thì đưa con trỏ tới ô đó và trả về None."""
+        ja, en = clean(self.ja.text()), clean(self.en.text())
+        if ja and en:
+            return Entry(ja, en, self.kind.gender())
+        (self.en if ja else self.ja).setFocus()
+        return None
+
+    def clear(self) -> None:
+        self.ja.clear()
+        self.en.clear()
+        self.kind.set_gender(None)
+
+
 class GlossaryEditor(QWidget):
     """Bảng các mục của glossary.txt: thêm, sửa, xóa, tìm, rồi lưu cùng các trang khác của cửa sổ.
 
@@ -289,21 +321,9 @@ class GlossaryEditor(QWidget):
 
         self._message = _label("", "error")
         self._message.hide()
-        self._ja = QLineEdit(placeholderText="Chữ Nhật, vd. 霊夢")
-        self._en = QLineEdit(placeholderText="Tiếng Anh, vd. Reimu")
-        self._kind = KindBox()
-        self._kind.setFixedWidth(130)
-        add = QPushButton("Thêm", autoDefault=False)
-        add.clicked.connect(self._add)
-        for field in (self._ja, self._en):
-            field.returnPressed.connect(self._add)
+        self._form = TermForm("Chữ Nhật, vd. 霊夢", "Tiếng Anh, vd. Reimu", self._add)
         self._add_card, form = _card("Thêm mục")
-        row = QHBoxLayout()
-        row.addWidget(self._ja, 1)
-        row.addWidget(self._en, 1)
-        row.addWidget(self._kind)
-        row.addWidget(add)
-        form.addLayout(row)
+        form.addLayout(self._form)
 
         self._search = QLineEdit(placeholderText="Tìm theo chữ Nhật hoặc tiếng Anh…")
         self._search.textChanged.connect(self._filter)
@@ -375,26 +395,22 @@ class GlossaryEditor(QWidget):
         return row
 
     def _form_text(self) -> str:
-        return self._ja.text().strip() + self._en.text().strip()
+        return self._form.ja.text().strip() + self._form.en.text().strip()
 
     def _add(self) -> None:
-        """Thêm mục đang gõ; chữ Nhật đã có trong bảng thì sửa dòng đó. Thiếu ô nào thì đưa con trỏ tới ô đó."""
-        ja, en = clean(self._ja.text()), clean(self._en.text())
-        if not ja or not en:
-            (self._en if ja else self._ja).setFocus()
+        """Thêm mục đang gõ; chữ Nhật đã có trong bảng thì sửa dòng đó."""
+        entry = self._form.entry()
+        if entry is None:
             return
         self._search.clear()
-        entry = Entry(ja, en, self._kind.gender())
-        row = next((i for i, old in enumerate(self._rows()) if old.ja == ja), None)
+        row = next((i for i, old in enumerate(self._rows()) if old.ja == entry.ja), None)
         if row is None:
             row = self._append_row(entry)
         else:
             self._set_row(row, entry)
         self._table.scrollToItem(self._table.item(row, 0))
-        self._ja.clear()
-        self._en.clear()
-        self._kind.setCurrentIndex(0)
-        self._ja.setFocus()
+        self._form.clear()
+        self._form.ja.setFocus()
 
     def _filter(self, text: str) -> None:
         needle = text.strip().casefold()
@@ -447,7 +463,7 @@ class GlossaryEditor(QWidget):
         if self._form_text():
             self._add()
             if self._form_text():
-                return f"Mục mới còn thiếu {'tiếng Anh' if self._ja.text().strip() else 'chữ Nhật'}."
+                return f"Mục mới còn thiếu {'tiếng Anh' if self._form.ja.text().strip() else 'chữ Nhật'}."
         seen = set()
         for row, entry in enumerate(self._rows()):
             if not entry.ja and not entry.en:

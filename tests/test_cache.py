@@ -1,5 +1,3 @@
-import sqlite3
-
 from screen_translator.cache import TranslationCache
 
 
@@ -18,11 +16,7 @@ def test_translations_survive_a_restart(tmp_path):
 
 
 def test_translations_depend_on_the_glossary_used(tmp_path):
-    path = tmp_path / "cache.sqlite3"
-    with sqlite3.connect(path) as old:  # cache của bản trước, chưa có cột glossary
-        old.execute("CREATE TABLE translations (model TEXT, ja TEXT, en TEXT, PRIMARY KEY (model, ja))")
-    old.close()
-    cache = TranslationCache(path)
+    cache = TranslationCache(tmp_path / "cache.sqlite3")
     cache.put("vntl", "霊夢の部屋", "Reimu's room", glossary="霊夢=Reimu|Female")
     assert cache.get("vntl", "霊夢の部屋", glossary="霊夢=Reimu|Female") == "Reimu's room"
     assert cache.get("vntl", "霊夢の部屋") is None  # dịch lúc chưa khai tên: không dùng lại

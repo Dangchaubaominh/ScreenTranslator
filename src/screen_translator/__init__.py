@@ -10,7 +10,7 @@ from pathlib import Path
 def main() -> None:
     parser = argparse.ArgumentParser(prog="screen-translator", description=__doc__)
     parser.add_argument("--image", type=Path, help="đọc và dịch một file ảnh rồi thoát, không mở giao diện")
-    parser.add_argument("--autostart", action="store_true", help="chạy lúc mở Windows: không hiện thông báo khởi động")
+    parser.add_argument("--autostart", action="store_true", help="chạy lúc mở Windows: chỉ có icon ở khay")
     args = parser.parse_args()
 
     from .config import APP_DIR

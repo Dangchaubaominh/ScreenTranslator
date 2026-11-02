@@ -6,6 +6,7 @@ dòng; các cột sát nhau là một bóng, đọc từ phải sang trái.
 
 import re
 from dataclasses import dataclass
+from functools import reduce
 
 # hiragana, katakana, kanji, katakana nửa độ rộng
 _JAPANESE = re.compile(r"[぀-ヿ㐀-鿿ｦ-ﾟ]")
@@ -94,11 +95,8 @@ def _is_column(line: TextBox) -> bool:
 
 
 def _merge(block: list[TextBox], vertical: bool) -> TextBox:
-    text = block[0].text
-    for line in block[1:]:
-        text = _join(text, line.text)
     return TextBox(
-        text,
+        reduce(_join, (b.text for b in block)),
         min(b.left for b in block),
         min(b.top for b in block),
         max(b.right for b in block),
@@ -107,20 +105,21 @@ def _merge(block: list[TextBox], vertical: bool) -> TextBox:
     )
 
 
+def _group(lines: list[TextBox], belongs) -> list[list[TextBox]]:
+    """Mỗi dòng nối vào khối gần nhất nhận nó (`belongs`); không khối nào nhận thì mở khối mới."""
+    blocks: list[list[TextBox]] = []
+    for line in lines:
+        if target := next((b for b in reversed(blocks) if belongs(b, line)), None):
+            target.append(line)
+        else:
+            blocks.append([line])
+    return blocks
+
+
 def group_lines(lines: list[TextBox]) -> list[TextBox]:
     """Khối chữ ngang theo thứ tự từ trên xuống, rồi tới các bóng thoại chữ dọc từ phải sang trái."""
-    rows: list[list[TextBox]] = []
-    for line in sorted((b for b in lines if not _is_column(b)), key=lambda b: (b.top, b.left)):
-        target = next((b for b in reversed(rows) if _continues(b, line)), None)
-        if target is None:
-            rows.append([line])
-        else:
-            target.append(line)
-    bubbles: list[list[TextBox]] = []
-    for column in sorted((b for b in lines if _is_column(b)), key=lambda b: (-b.right, b.top)):
-        target = next((b for b in reversed(bubbles) if _next_column(b, column)), None)
-        if target is None:
-            bubbles.append([column])
-        else:
-            target.append(column)
-    return [_merge(block, False) for block in rows] + [_merge(block, True) for block in bubbles]
+    rows = sorted((b for b in lines if not _is_column(b)), key=lambda b: (b.top, b.left))
+    columns = sorted((b for b in lines if _is_column(b)), key=lambda b: (-b.right, b.top))
+    return [_merge(block, False) for block in _group(rows, _continues)] + [
+        _merge(block, True) for block in _group(columns, _next_column)
+    ]

@@ -86,15 +86,7 @@ def monitor_at(x: int, y: int) -> Monitor:
     return Monitor(found["left"], found["top"], found["width"], found["height"])
 
 
-def grab(left: int, top: int, width: int, height: int) -> Image.Image:
+def grab(area: Monitor | Region) -> Image.Image:
     with mss.MSS() as sct:
-        shot = sct.grab({"left": left, "top": top, "width": width, "height": height})
+        shot = sct.grab({"left": area.left, "top": area.top, "width": area.width, "height": area.height})
     return Image.frombytes("RGB", shot.size, shot.rgb)
-
-
-def grab_monitor(monitor: Monitor) -> Image.Image:
-    return grab(monitor.left, monitor.top, monitor.width, monitor.height)
-
-
-def grab_region(region: Region) -> Image.Image:
-    return grab(region.left, region.top, region.width, region.height)

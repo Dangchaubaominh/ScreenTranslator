@@ -12,7 +12,7 @@ from PIL import Image
 from PySide6.QtCore import QEvent, QObject, QPoint, QRect, QRectF, Qt, QTimer
 from PySide6.QtGui import QColor, QCursor, QFont, QGuiApplication, QIcon, QPainter, QPixmap, QScreen
 from PySide6.QtNetwork import QLocalServer, QLocalSocket
-from PySide6.QtWidgets import QApplication, QDialog, QMenu, QSystemTrayIcon
+from PySide6.QtWidgets import QApplication, QDialog, QMenu, QSystemTrayIcon, QWidget
 
 from . import capture, live, shortcuts, win32
 from . import config as config_store
@@ -69,6 +69,12 @@ def make_icon(color: QColor = ICON_COLOR, size: int = 64, *, paused: bool = Fals
     return QIcon(pixmap)
 
 
+def show_on_top(widget: QWidget) -> None:
+    widget.show()
+    widget.raise_()
+    widget.activateWindow()
+
+
 class TrayApp(QObject):
     def __init__(self):
         super().__init__()
@@ -111,6 +117,8 @@ class TrayApp(QObject):
             "toggle": self.toggle_overlay,
             "edit": self.open_editor,
             "escape": lambda: self.dismiss("phím tắt"),
+            "orient": self._rotate_panel,
+            "close": lambda: self.set_panel_visible(False),
         }
         self.menu = QMenu()  # giữ tham chiếu, không thì Python thu hồi mất menu
         self._panel_action = self.menu.addAction("Thanh điều khiển")
@@ -131,7 +139,7 @@ class TrayApp(QObject):
         self.menu.addAction("Hướng dẫn…").triggered.connect(lambda: self.open_window("guide"))
         self.menu.addAction("Thoát").triggered.connect(self.quit)
         self.panel = ControlPanel(self.menu, vertical=self.config.panel_vertical)
-        self.panel.triggered.connect(self._on_panel_action)
+        self.panel.triggered.connect(lambda action: self._handlers[action]())
         self.panel.transparency_changed.connect(lambda value: self.set_display(overlay_opacity=100 - value))
         self.panel.moved.connect(lambda pos: self.set_display(panel_pos=(pos.x(), pos.y())))
         self.tray = QSystemTrayIcon()
@@ -162,10 +170,7 @@ class TrayApp(QObject):
         """Lỗi: popup của Windows (còn lại trong Notification Center). Thông tin: dòng chữ ngắn tự tắt."""
         if warning:
             self.tray.showMessage(APP_NAME, message, QSystemTrayIcon.MessageIcon.Warning)
-        else:
-            self._show_hint(message)
-
-    def _show_hint(self, message: str) -> None:
+            return
         size = hint_size(message)
         if self.area is not None:  # ngay trên vùng đang dịch, chỗ người dùng đang nhìn
             x, y, _, _ = self.area.to_logical()
@@ -209,10 +214,8 @@ class TrayApp(QObject):
             self.panel.raise_()
         else:
             self.panel.hide()
+            self._panel_before_live = False  # đang live mà tự ẩn thanh thì tắt live xong thanh không hiện lại
         self._panel_action.setChecked(visible)
-        if visible != self.config.show_panel:
-            self.config = replace(self.config, show_panel=visible)
-            config_store.save(self.config)
 
     def _place_panel(self) -> None:
         """Chỗ đã kéo tới lần trước, nếu vẫn nằm trên một màn hình; không thì giữa mép trên (thanh ngang) / mép
@@ -233,14 +236,6 @@ class TrayApp(QObject):
         self.panel.move(clamp(self.panel.geometry(), screen.availableGeometry()).topLeft())
         self.set_display(panel_vertical=self.panel.vertical, panel_pos=(self.panel.x(), self.panel.y()))
 
-    def _on_panel_action(self, action: str) -> None:
-        if action == "close":
-            self.set_panel_visible(False)
-        elif action == "orient":
-            self._rotate_panel()
-        else:
-            self._handlers[action]()
-
     # --- chụp và gửi đi dịch ---
 
     @staticmethod
@@ -253,14 +248,12 @@ class TrayApp(QObject):
         if self.selector is not None:
             return
         monitor, screen = self._screen_at_cursor()
-        shot = capture.grab_monitor(monitor)  # chụp trước khi hiện màn chọn vùng
+        shot = capture.grab(monitor)  # chụp trước khi hiện màn chọn vùng
         self._previous_foreground = win32.foreground_window()
         self.selector = RegionSelector(screen, shot)
         self.selector.selected.connect(lambda rect: self._on_selected(rect, screen, monitor, shot))
         self.selector.cancelled.connect(self._end_selection)
-        self.selector.show()
-        self.selector.raise_()
-        self.selector.activateWindow()
+        show_on_top(self.selector)
 
     def _end_selection(self) -> None:
         self.selector = None
@@ -304,7 +297,7 @@ class TrayApp(QObject):
         if not self.overlay.excluded_from_capture:
             self.overlay.hide()
             QApplication.processEvents()
-        return capture.grab_region(area)
+        return capture.grab(area)
 
     def _submit_image(self, area: capture.Region, image: Image.Image, *, selection: bool) -> None:
         new_area = (area, selection) != (self.area, self.area_is_selection)
@@ -332,7 +325,7 @@ class TrayApp(QObject):
         self.overlay.show_text(rect, text, dim=True)
 
     def _overlay_items(self, items: list[Item]) -> tuple[list[tuple[QRect, str | None]], bool]:
-        """Khung (tọa độ logic) + bản dịch cần vẽ, và có vẽ theo từng khối chữ không (`blocks` của show_items)."""
+        """Khung (tọa độ logic) + bản dịch cần vẽ, và có vẽ theo từng khối chữ không."""
         if self.area is None:
             return [], False
         if self.area_is_selection and len(items) == 1:
@@ -349,8 +342,8 @@ class TrayApp(QObject):
 
     def _show_result(self, items: list[Item]) -> None:
         boxes, blocks = self._overlay_items(items)
-        bounds = QRect(*self.area.to_logical()) if self.area is not None else None
-        self.overlay.show_items(boxes, blocks=blocks, bounds=bounds)  # khung không ra ngoài cửa sổ game
+        # từng khối chữ: khung không ra ngoài cửa sổ game
+        self.overlay.show_items(boxes, bounds=QRect(*self.area.to_logical()) if blocks else None)
         self.shown_items = items
 
     # --- kết quả từ luồng phụ ---
@@ -378,8 +371,7 @@ class TrayApp(QObject):
             self._live_job = None
 
     def on_failed(self, job: int, message: str) -> None:
-        if job == self._live_job:
-            self._live_job = None
+        self.on_idle(job)
         if job != self.job:
             return
         self._show_status(message)
@@ -432,8 +424,8 @@ class TrayApp(QObject):
             self._panel_before_live = self.panel.isVisible()
             self.panel.hide()
             self._panel_action.setChecked(False)
-        elif not on and self.live_timer.isActive() and self._panel_before_live and self.config.show_panel:
-            self.set_panel_visible(True)  # trong lúc live đã bấm ✕ ẩn thanh thì thôi
+        elif not on and self.live_timer.isActive() and self._panel_before_live:
+            self.set_panel_visible(True)
         if on:
             self.live_timer.start()
         else:
@@ -451,7 +443,7 @@ class TrayApp(QObject):
         page = not self.area_is_selection  # cả cửa sổ: vẫn theo dõi cuộn trang trong lúc đang đọc trang
         if self.area is None or (self._live_busy() and not page):
             return
-        image = capture.grab_region(self.area)
+        image = capture.grab(self.area)
         event = self.watcher.update(live.thumbnail(image), time.monotonic())
         if event == "moved":  # trang đã cuộn / lật: bản dịch lệch chỗ, bỏ ngay; lượt đang đọc dở cũng bỏ
             self.job = 0
@@ -493,11 +485,13 @@ class TrayApp(QObject):
     def set_display(self, **changes) -> None:
         """Đổi cài đặt hiển thị từ thanh điều khiển (độ trong suốt, chỗ và chiều của thanh) và vẽ lại ngay."""
         self.config = replace(self.config, **changes)
-        self.overlay.set_appearance(Appearance.from_config(self.config))
-        if self.overlay.isVisible() and self.shown_items:
-            self._show_result(self.shown_items)
-        self._update_tray()
+        self._restyle_overlay()
         self.save_timer.start()
+
+    def _restyle_overlay(self) -> None:
+        self.overlay.appearance = Appearance.from_config(self.config)
+        if self.overlay.isVisible() and self.shown_items:  # vẽ lại bản dịch đang hiện theo kiểu mới
+            self._show_result(self.shown_items)
 
     # --- các hành động khác ---
 
@@ -511,8 +505,7 @@ class TrayApp(QObject):
         """Esc: xóa hẳn bản dịch đang hiện, lượt đang dịch dở cũng bỏ; đang bật live mode thì tắt luôn."""
         log.info("Esc (%s): xóa bản dịch", via)
         self.job = 0
-        self.shown_items = []
-        self.overlay.show_items([])
+        self._show_result([])
         self.hint.hide()
         if self.live_timer.isActive():
             self.toggle_live()  # tắt, kèm dòng "Đã tắt live mode."
@@ -547,9 +540,7 @@ class TrayApp(QObject):
 
     def open_editor(self) -> None:
         self.edit_dialog.set_result(self.last_ja, self.last_en)
-        self.edit_dialog.show()
-        self.edit_dialog.raise_()
-        self.edit_dialog.activateWindow()
+        show_on_top(self.edit_dialog)
 
     def open_window(self, page: str = "guide", *, welcome: bool = False) -> None:
         """Cửa sổ chính (hướng dẫn, tên riêng, phím tắt, cài đặt, chỉnh màu), mở ở trang `page`; đang mở thì chỉ chuyển trang.
@@ -563,9 +554,7 @@ class TrayApp(QObject):
             self.window.finished.connect(self._on_window_closed)
         self.window.show_page(page)
         self.window.setWindowState(self.window.windowState() & ~Qt.WindowState.WindowMinimized)  # đang thu nhỏ
-        self.window.show()
-        self.window.raise_()
-        self.window.activateWindow()
+        show_on_top(self.window)
 
     def _on_window_closed(self, result: int) -> None:
         window, self.window = self.window, None
@@ -589,22 +578,13 @@ class TrayApp(QObject):
         self.save_timer.stop()
         config_store.save(self.config)
         self.worker.reconfigure(self.config)
-        self.overlay.set_appearance(Appearance.from_config(self.config))
-        if self.overlay.isVisible() and self.shown_items:  # vẽ lại bản dịch đang hiện theo kiểu mới
-            self._show_result(self.shown_items)
+        self._restyle_overlay()
         if not self.paused:  # đang tạm dừng thì phím tắt vẫn để cho game
             self._register_hotkeys()
         self.panel.set_hotkeys(self.config.hotkeys)
         self._update_tray()
 
-    # --- màn hình chào, shortcut ---
-
-    def greet(self, *, autostart: bool) -> None:
-        """Mở app bằng tay (menu Start, Desktop…): luôn có màn hình chào; bấm "Bắt đầu" thì thanh điều khiển hiện, kể cả
-        khi lần trước đã bấm ✕ ẩn thanh; đóng màn hình chào bằng ✕ thì thoát app. Tự chạy lúc mở Windows thì chỉ có icon
-        ở khay."""
-        if not autostart:
-            self.open_window("guide", welcome=True)
+    # --- shortcut ---
 
     @staticmethod
     def _shortcut_states() -> dict[str, bool] | None:
@@ -671,5 +651,6 @@ def run(*, autostart: bool = False) -> int:
         return 0
     tray_app = TrayApp()
     _listen_for_wake(tray_app)
-    tray_app.greet(autostart=autostart)
+    if not autostart:  # mở bằng tay thì luôn có màn hình chào; tự chạy lúc mở Windows thì chỉ có icon ở khay
+        tray_app.open_window("guide", welcome=True)
     return app.exec()

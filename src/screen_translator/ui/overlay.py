@@ -3,11 +3,11 @@
 Một overlay vẽ được nhiều khối (dịch cả cửa sổ game: mỗi dòng / đoạn chữ một khối, như Google Lens).
 """
 
-from functools import lru_cache
+from functools import lru_cache, reduce
 from typing import NamedTuple
 
 from PySide6.QtCore import QRect, QSize, Qt
-from PySide6.QtGui import QColor, QFont, QFontMetrics, QGuiApplication, QPainter
+from PySide6.QtGui import QColor, QFont, QFontMetrics, QPainter
 from PySide6.QtWidgets import QWidget
 
 from .. import win32
@@ -196,11 +196,6 @@ def paint_block(painter: QPainter, fitted: Fitted, text: str, appearance: Appear
     painter.drawText(inner, TEXT_FLAGS, text)
 
 
-def _screen_bounds(rect: QRect) -> QRect:
-    screen = QGuiApplication.screenAt(rect.center()) or QGuiApplication.primaryScreen()
-    return screen.geometry()
-
-
 class Overlay(QWidget):
     def __init__(self, appearance: Appearance | None = None):
         super().__init__(
@@ -219,26 +214,16 @@ class Overlay(QWidget):
         # Nếu Windows quá cũ không hỗ trợ, app phải ẩn overlay trước mỗi lần chụp lại vùng
         self.excluded_from_capture = win32.exclude_from_capture(int(self.winId()))
 
-    def set_appearance(self, appearance: Appearance) -> None:
-        """Áp dụng từ lần show_items sau."""
-        self.appearance = appearance
-
     def show_items(
-        self,
-        items: list[tuple[QRect, str | None]],
-        *,
-        dim: bool = False,
-        blocks: bool = False,
-        bounds: QRect | None = None,
+        self, items: list[tuple[QRect, str | None]], *, dim: bool = False, bounds: QRect | None = None
     ) -> None:
         """Hiện từng `(khung tọa độ logic, chữ)` đè lên khung đó. dim=True: chữ xám, dùng cho trạng thái chờ / lỗi.
 
-        blocks=True: mỗi khối chữ của cả cửa sổ một khung, không khung nào đè lên khung khác, không ra ngoài
-        `bounds` (chữ None: khối còn đang dịch, chỉ giữ chỗ).
+        bounds: mỗi khối chữ của cả cửa sổ một khung, không khung nào đè lên khung khác, không ra ngoài `bounds`
+        (chữ None: khối còn đang dịch, chỉ giữ chỗ).
         """
         max_px = self.appearance.max_px
-        if blocks:
-            bounds = bounds or (_screen_bounds(items[0][0]) if items else QRect())
+        if bounds is not None:
             fitted = [(f, text) for f, (_, text) in zip(fit_blocks(items, max_px, bounds), items, strict=True) if f]
         else:
             fitted = [(fit_text(rect, text, max_px), text) for rect, text in items if text is not None]
@@ -247,9 +232,7 @@ class Overlay(QWidget):
             self._items = []
             self.hide()
             return
-        area = fitted[0][0].rect
-        for f, _ in fitted[1:]:
-            area = area.united(f.rect)
+        area = reduce(QRect.united, (f.rect for f, _ in fitted))
         self._items = [(f._replace(rect=f.rect.translated(-area.topLeft())), text) for f, text in fitted]
         self.setGeometry(area)
         self.show()

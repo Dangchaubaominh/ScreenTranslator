@@ -4,12 +4,12 @@ import logging
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QColor, QGuiApplication
-from PySide6.QtWidgets import QDialog, QHBoxLayout, QLabel, QLineEdit, QPlainTextEdit, QPushButton, QVBoxLayout
+from PySide6.QtWidgets import QDialog, QHBoxLayout, QLabel, QPlainTextEdit, QPushButton, QVBoxLayout
 
 from .. import win32
 from ..config import GLOSSARY_PATH
 from ..glossary import Entry, Glossary, clean, format_line, update_file, valid_ja
-from .window import BG, STYLE, KindBox
+from .window import BG, STYLE, TermForm
 
 log = logging.getLogger(__name__)
 
@@ -29,21 +29,9 @@ class EditDialog(QDialog):
         self._ja.selectionChanged.connect(self._on_selection)
         self._en = QPlainTextEdit(readOnly=True)
 
-        self._term_ja = QLineEdit(placeholderText="Chữ Nhật")
-        self._term_en = QLineEdit(placeholderText="Tên đúng, tiếng Anh")
-        self._term_kind = KindBox()
-        self._term_kind.setFixedWidth(130)
-        add = QPushButton("Thêm", autoDefault=False)
-        add.clicked.connect(self._add_term)
-        for field in (self._term_ja, self._term_en):
-            field.returnPressed.connect(self._add_term)
+        self._term = TermForm("Chữ Nhật", "Tên đúng, tiếng Anh", self._add_term)
         self._term_message = QLabel(objectName="hint", wordWrap=True)
         self._term_message.hide()
-        term = QHBoxLayout()
-        term.addWidget(self._term_ja, 1)
-        term.addWidget(self._term_en, 1)
-        term.addWidget(self._term_kind)
-        term.addWidget(add)
 
         # không nút nào là nút mặc định: Enter ở hàng thêm tên chỉ để thêm tên
         translate_button = QPushButton("Dịch lại", objectName="primary", autoDefault=False)
@@ -63,7 +51,7 @@ class EditDialog(QDialog):
         layout.addWidget(QLabel("Bản dịch:"))
         layout.addWidget(self._en)
         layout.addWidget(QLabel("Tên dịch sai: bôi đen tên đó ở ô chữ Nhật, gõ tên đúng rồi Enter."))
-        layout.addLayout(term)
+        layout.addLayout(self._term)
         layout.addWidget(self._term_message)
         layout.addLayout(buttons)
         win32.dark_title_bar(int(self.winId()), QColor(BG))
@@ -84,9 +72,9 @@ class EditDialog(QDialog):
         if not selected:
             return
         entry = self._known_term(selected)
-        self._term_ja.setText(selected)
-        self._term_en.setText(entry.en if entry else "")
-        self._term_kind.set_gender(entry.gender if entry else None)
+        self._term.ja.setText(selected)
+        self._term.en.setText(entry.en if entry else "")
+        self._term.kind.set_gender(entry.gender if entry else None)
         self._show_term_message("")
 
     def _known_term(self, ja: str) -> Entry | None:
@@ -96,24 +84,20 @@ class EditDialog(QDialog):
             return None  # lúc thêm sẽ báo lỗi: chưa cần báo khi mới bôi đen
 
     def _add_term(self) -> None:
-        """Ghi tên vào glossary.txt và dịch lại ngay, để thấy kết quả với tên mới. Thiếu ô nào thì đưa con trỏ tới ô đó."""
-        ja, en = clean(self._term_ja.text()), clean(self._term_en.text())
-        if not ja or not en:
-            (self._term_en if ja else self._term_ja).setFocus()
+        """Ghi tên vào glossary.txt và dịch lại ngay, để thấy kết quả với tên mới."""
+        entry = self._term.entry()
+        if entry is None:
             return
-        if not valid_ja(ja):
+        if not valid_ja(entry.ja):
             self._show_term_message("Chữ Nhật không được có dấu = hay bắt đầu bằng #.", error=True)
             return
-        entry = Entry(ja, en, self._term_kind.gender())
         try:
             update_file(GLOSSARY_PATH, [], [entry])
         except (OSError, UnicodeError) as e:
             log.exception("Không ghi được glossary")
             self._show_term_message(f"Không ghi được {GLOSSARY_PATH.name} (cần lưu dạng UTF-8): {e}", error=True)
             return
-        self._term_ja.clear()
-        self._term_en.clear()
-        self._term_kind.set_gender(None)
+        self._term.clear()
         self._show_term_message(f"Đã lưu vào tên riêng: {format_line(entry)}")
         if self._ja.toPlainText().strip():
             self._retranslate()

@@ -60,7 +60,6 @@ class Config:
     overlay_font_px: int = 34  # cỡ chữ lớn nhất của bản dịch; khung nhỏ thì chữ tự thu nhỏ cho vừa
     overlay_opacity: int = 100  # % độ đặc của nền; thấp hơn thì chữ Nhật gốc lộ ra sau bản dịch
     overlay_color: str = "#0c101c"
-    show_panel: bool = True  # thanh điều khiển nổi
     panel_vertical: bool = False  # thanh xếp thành cột dọc thay vì hàng ngang
     panel_pos: tuple[int, int] | None = None  # chỗ thanh điều khiển (tọa độ logic); None: giữa mép trên màn hình
 
@@ -89,17 +88,15 @@ def load(path: Path = CONFIG_PATH) -> Config:
         return Config()
     known = {f.name for f in fields(Config)}
     config = Config(**{k: v for k, v in data.items() if k in known})
-    if config.profile not in PROFILES:
-        config = replace(config, profile=Config.profile)
-    if config.ocr_engine not in OCR_ENGINES:
-        config = replace(config, ocr_engine=Config.ocr_engine)
-    if not re.fullmatch(r"#[0-9a-fA-F]{6}", str(config.overlay_color)):
-        config = replace(config, overlay_color=Config.overlay_color)
+    valid_color = re.fullmatch(r"#[0-9a-fA-F]{6}", str(config.overlay_color))
     pos = config.panel_pos
     valid_pos = isinstance(pos, list | tuple) and len(pos) == 2 and all(isinstance(v, int) for v in pos)
-    config = replace(config, panel_pos=tuple(pos) if valid_pos else None)
     return replace(
         config,
+        profile=config.profile if config.profile in PROFILES else Config.profile,
+        ocr_engine=config.ocr_engine if config.ocr_engine in OCR_ENGINES else Config.ocr_engine,
+        overlay_color=config.overlay_color if valid_color else Config.overlay_color,
+        panel_pos=tuple(pos) if valid_pos else None,
         overlay_font_px=_clamp(config.overlay_font_px, FONT_PX_RANGE, Config.overlay_font_px),
         overlay_opacity=_clamp(config.overlay_opacity, OPACITY_RANGE, Config.overlay_opacity),
     )

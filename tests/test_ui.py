@@ -328,7 +328,7 @@ def test_live_mode_over_a_whole_window_follows_scrolling(qapp, monkeypatch):
     area = app_module.capture.Region.from_physical(monitor, (0, 0), 1.0, 0, 0, 1920, 1040)
     tray_app._submit_image(area, Image.new("RGB", (1920, 1040)), selection=False)  # Cả cửa sổ: trang manga
     overlay.excluded_from_capture = True
-    monkeypatch.setattr(app_module.capture, "grab_region", lambda area: Image.new("RGB", (area.width, area.height)))
+    monkeypatch.setattr(app_module.capture, "grab", lambda area: Image.new("RGB", (area.width, area.height)))
     tray_app.toggle_live()
     assert isinstance(tray_app.watcher, app_module.live.PageWatcher) and "lật trang" in messages[-1]
     tray_app.watcher = watcher = FakeWatcher()
@@ -377,7 +377,7 @@ def test_live_mode_sends_one_frame_at_a_time_and_follows_results(qapp, monkeypat
         selection=True,
     )
     tray_app.overlay.excluded_from_capture = True
-    monkeypatch.setattr(app_module.capture, "grab_region", lambda area: Image.new("RGB", (area.width, area.height)))
+    monkeypatch.setattr(app_module.capture, "grab", lambda area: Image.new("RGB", (area.width, area.height)))
     tray_app.toggle_live()
     assert tray_app.live_timer.isActive() and tray_app._menu_actions["live"].isChecked()
     assert worker.live_resets == 1
@@ -430,13 +430,13 @@ def select(dialog: dialogs_module.EditDialog, start: int, end: int) -> None:
 def test_edit_dialog_adds_a_selected_name_and_translates_again(qapp, tmp_path):
     dialog, sent = edit_dialog("霊夢の部屋")
     select(dialog, 0, 2)
-    assert dialog._term_ja.text() == "霊夢" and dialog._term_en.text() == ""
-    dialog._term_en.setText(" Reimu ")
-    dialog._term_kind.set_gender("Female")
-    QTest.keyClick(dialog._term_en, Qt.Key.Key_Return)
+    assert dialog._term.ja.text() == "霊夢" and dialog._term.en.text() == ""
+    dialog._term.en.setText(" Reimu ")
+    dialog._term.kind.set_gender("Female")
+    QTest.keyClick(dialog._term.en, Qt.Key.Key_Return)
     assert (tmp_path / "glossary.txt").read_text(encoding="utf-8").endswith("霊夢 = Reimu (nữ)\n")
     assert sent == ["霊夢の部屋"]  # đúng một lần: Enter không kích thêm nút Dịch lại
-    assert dialog._term_ja.text() == dialog._term_en.text() == "" and dialog._term_kind.gender() is None
+    assert dialog._term.ja.text() == dialog._term.en.text() == "" and dialog._term.kind.gender() is None
     assert "霊夢 = Reimu (nữ)" in dialog._term_message.text() and dialog._term_message.isVisible()
     assert dialog.isVisible()
     dialog.done(0)
@@ -447,37 +447,37 @@ def test_edit_dialog_shows_and_updates_a_known_name(qapp, tmp_path):
     path.write_text("# ghi chú\n霊夢 = Reimu (nữ)\n実績 = Achievements\n", encoding="utf-8")
     dialog, _ = edit_dialog("霊夢の実績")
     select(dialog, 0, 2)
-    assert dialog._term_en.text() == "Reimu" and dialog._term_kind.gender() == "Female"
+    assert dialog._term.en.text() == "Reimu" and dialog._term.kind.gender() == "Female"
     select(dialog, 3, 5)  # đổi sang tên khác: không còn tên cũ trong ô
-    assert dialog._term_en.text() == "Achievements" and dialog._term_kind.gender() is None
+    assert dialog._term.en.text() == "Achievements" and dialog._term.kind.gender() is None
     select(dialog, 0, 2)
-    dialog._term_en.setText("Reimu Hakurei")
+    dialog._term.en.setText("Reimu Hakurei")
     dialog._add_term()
     assert path.read_text(encoding="utf-8") == "# ghi chú\n霊夢 = Reimu Hakurei (nữ)\n実績 = Achievements\n"
     dialog.set_result("霊夢の実績", "Reimu Hakurei's achievements")  # kết quả dịch lại về: chữ được đặt lại
     select(dialog, 0, 2)
-    assert dialog._term_en.text() == "Reimu Hakurei"  # đọc lại file vừa ghi
+    assert dialog._term.en.text() == "Reimu Hakurei"  # đọc lại file vừa ghi
     dialog.done(0)
 
 
 def test_edit_dialog_clearing_a_selection_keeps_what_was_typed(qapp):
     dialog, _ = edit_dialog("霊夢\nの部屋")
     select(dialog, 0, 5)  # bôi qua hai dòng: tên nối lại, không có ký tự xuống dòng
-    assert dialog._term_ja.text() == "霊夢の部"
-    dialog._term_en.setText("Reimu")
+    assert dialog._term.ja.text() == "霊夢の部"
+    dialog._term.en.setText("Reimu")
     select(dialog, 1, 1)
-    assert dialog._term_ja.text() == "霊夢の部" and dialog._term_en.text() == "Reimu"
+    assert dialog._term.ja.text() == "霊夢の部" and dialog._term.en.text() == "Reimu"
     dialog.done(0)
 
 
 def test_edit_dialog_needs_both_fields_and_a_valid_name(qapp, tmp_path):
     dialog, sent = edit_dialog("霊夢の部屋")
-    dialog._term_ja.setText("霊夢")
+    dialog._term.ja.setText("霊夢")
     dialog._add_term()
-    dialog._term_ja.setText("a=b")
-    dialog._term_en.setText("Reimu")
+    dialog._term.ja.setText("a=b")
+    dialog._term.en.setText("Reimu")
     dialog._add_term()
-    assert "dấu =" in dialog._term_message.text() and dialog._term_ja.text() == "a=b"
+    assert "dấu =" in dialog._term_message.text() and dialog._term.ja.text() == "a=b"
     assert not (tmp_path / "glossary.txt").exists() and sent == []
     dialog.done(0)
 
@@ -488,18 +488,18 @@ def test_edit_dialog_reports_an_unreadable_glossary_and_leaves_it_alone(qapp, tm
     path.write_bytes(bad)
     dialog, sent = edit_dialog("霊夢の部屋")
     select(dialog, 0, 2)  # bôi đen vẫn được, chỉ không tra được tên cũ
-    assert dialog._term_ja.text() == "霊夢" and dialog._term_en.text() == ""
-    dialog._term_en.setText("Reimu")
+    assert dialog._term.ja.text() == "霊夢" and dialog._term.en.text() == ""
+    dialog._term.en.setText("Reimu")
     dialog._add_term()
-    assert "UTF-8" in dialog._term_message.text() and dialog._term_ja.text() == "霊夢"  # không mất chữ đã gõ
+    assert "UTF-8" in dialog._term_message.text() and dialog._term.ja.text() == "霊夢"  # không mất chữ đã gõ
     assert path.read_bytes() == bad and sent == []
     dialog.done(0)
 
 
 def test_edit_dialog_with_nothing_to_translate_only_saves_the_name(qapp, tmp_path):
     dialog, sent = edit_dialog("")
-    dialog._term_ja.setText("霊夢")
-    dialog._term_en.setText("Reimu")
+    dialog._term.ja.setText("霊夢")
+    dialog._term.en.setText("Reimu")
     dialog._add_term()
     assert "霊夢 = Reimu" in (tmp_path / "glossary.txt").read_text(encoding="utf-8") and sent == []
     dialog.done(0)
@@ -515,9 +515,9 @@ def glossary_window(qapp, tmp_path, text: str | None = None) -> MainWindow:
 
 
 def add_entry(window: MainWindow, ja: str, en: str, kind: str = "Thuật ngữ") -> None:
-    window.glossary._ja.setText(ja)
-    window.glossary._en.setText(en)
-    window.glossary._kind.setCurrentText(kind)
+    window.glossary._form.ja.setText(ja)
+    window.glossary._form.en.setText(en)
+    window.glossary._form.kind.setCurrentText(kind)
     window.glossary._add()
 
 
@@ -528,7 +528,7 @@ def test_glossary_page_adds_edits_and_removes_entries(qapp, tmp_path):
 
     add_entry(window, " 魔理沙 ", "Marisa", "Nhân vật nữ")  # thêm: ô nhập trống lại, chờ mục sau
     assert editor.entries()[-1] == Entry("魔理沙", "Marisa", "Female") and editor.dirty()
-    assert editor._ja.text() == "" and editor._kind.currentText() == "Thuật ngữ"
+    assert editor._form.ja.text() == "" and editor._form.kind.currentText() == "Thuật ngữ"
     add_entry(window, "霊夢", "Reimu Hakurei", "Nhân vật nữ")  # chữ Nhật đã có: sửa dòng đó
     assert table.rowCount() == 3 and table.item(0, 1).text() == "Reimu Hakurei"
 
@@ -558,11 +558,11 @@ def test_glossary_search_hides_other_rows(qapp, tmp_path):
 def test_glossary_enter_adds_instead_of_closing_the_window(qapp, tmp_path):
     window = glossary_window(qapp, tmp_path)
     editor = window.glossary
-    editor._ja.setText("霊夢")
-    QTest.keyClick(editor._ja, Qt.Key.Key_Return)  # thiếu tiếng Anh: chuyển sang ô đó, chưa thêm
+    editor._form.ja.setText("霊夢")
+    QTest.keyClick(editor._form.ja, Qt.Key.Key_Return)  # thiếu tiếng Anh: chuyển sang ô đó, chưa thêm
     assert window.isVisible() and editor.entries() == []
-    editor._en.setText("Reimu")
-    QTest.keyClick(editor._en, Qt.Key.Key_Return)
+    editor._form.en.setText("Reimu")
+    QTest.keyClick(editor._form.en, Qt.Key.Key_Return)
     assert window.isVisible() and editor.entries() == [Entry("霊夢", "Reimu")]
     QTest.keyClick(editor._search, Qt.Key.Key_Return)  # ô tìm kiếm cũng không được bấm nhầm Lưu
     assert window.isVisible()
@@ -600,10 +600,12 @@ def test_glossary_blank_row_counts_as_removed(qapp, tmp_path):
 
 def test_glossary_saves_what_was_typed_but_not_added(qapp, tmp_path):
     window = glossary_window(qapp, tmp_path)
-    window.glossary._ja.setText("霊夢")  # thiếu tiếng Anh: báo lỗi, không mất chữ đã gõ
+    window.glossary._form.ja.setText("霊夢")  # thiếu tiếng Anh: báo lỗi, không mất chữ đã gõ
     window.findChild(QPushButton, "primary").click()
-    assert window.isVisible() and "thiếu tiếng Anh" in window._error.text() and window.glossary._ja.text() == "霊夢"
-    window.glossary._en.setText("Reimu")  # đủ cả hai: tự thêm rồi lưu
+    assert (
+        window.isVisible() and "thiếu tiếng Anh" in window._error.text() and window.glossary._form.ja.text() == "霊夢"
+    )
+    window.glossary._form.en.setText("Reimu")  # đủ cả hai: tự thêm rồi lưu
     window.findChild(QPushButton, "primary").click()
     assert not window.isVisible()
     assert "霊夢 = Reimu" in (tmp_path / "glossary.txt").read_text(encoding="utf-8")
@@ -835,7 +837,7 @@ def test_info_is_a_short_hint_and_errors_are_windows_popups(qapp, monkeypatch):
 
 
 def test_welcome_screen_on_every_launch_and_shortcuts_only_when_ticked(qapp, monkeypatch, tmp_path):
-    tray_app, messages = make_tray_app(monkeypatch, Config(show_panel=False))  # lần trước đã bấm ✕ ẩn thanh
+    tray_app, messages = make_tray_app(monkeypatch)
     states, applied = dict.fromkeys(app_module.shortcuts.LABELS, False), []
     launcher = tmp_path / "screen-translator-gui.exe"
     launcher.write_bytes(b"")
@@ -844,19 +846,18 @@ def test_welcome_screen_on_every_launch_and_shortcuts_only_when_ticked(qapp, mon
     monkeypatch.setattr(app_module.shortcuts, "ICON_PATH", tmp_path / "icon.ico")
     monkeypatch.setattr(app_module.shortcuts, "apply", lambda wanted: (applied.append(wanted), states.update(wanted)))
 
-    tray_app.greet(autostart=True)  # tự chạy lúc mở Windows: chỉ có icon ở khay
-    assert tray_app.window is None and not tray_app.panel.isVisible() and messages == []
+    assert tray_app.window is None and not tray_app.panel.isVisible() and messages == []  # chỉ có icon ở khay
 
-    tray_app.greet(autostart=False)  # mở từ menu Start / Desktop
+    tray_app.open_window("guide", welcome=True)  # mở từ menu Start / Desktop
     assert tray_app.window.isVisible() and tray_app.window.current_page() == "guide"
     assert not tray_app.panel.isVisible()
     assert not any(tray_app.window.startup.wanted().values())  # không bật sẵn gì
     tray_app.window.accept()  # bấm "Bắt đầu" mà không bật gì: không tạo shortcut nào
     assert applied == [] and tray_app.window is None
-    assert tray_app.panel.isVisible() and tray_app.config.show_panel and tray_app._panel_action.isChecked()
+    assert tray_app.panel.isVisible() and tray_app._panel_action.isChecked()
 
     tray_app.panel.hide()
-    tray_app.greet(autostart=False)  # lần mở sau vẫn có màn hình chào
+    tray_app.open_window("guide", welcome=True)  # lần mở sau vẫn có màn hình chào
     tray_app.window.startup._boxes["autostart"].setChecked(True)  # người dùng tự bật ở trang Cài đặt
     tray_app.window.accept()
     assert applied == [{"start_menu": False, "desktop": False, "autostart": True}]
@@ -865,7 +866,7 @@ def test_welcome_screen_on_every_launch_and_shortcuts_only_when_ticked(qapp, mon
     tray_app.panel.hide()
     quits = []
     monkeypatch.setattr(tray_app, "quit", lambda: quits.append(True))
-    tray_app.greet(autostart=False)  # shortcut đã có thì được bật sẵn; đóng bằng ✕: không đổi gì, thoát app
+    tray_app.open_window("guide", welcome=True)  # shortcut đã có thì được bật sẵn; đóng bằng ✕: không đổi gì, thoát app
     assert tray_app.window.startup.wanted()["autostart"]
     tray_app.window.startup._boxes["desktop"].setChecked(True)
     QTest.keyClick(tray_app.window, Qt.Key.Key_Escape)  # Esc (phím xóa bản dịch) không được đóng màn hình chào
@@ -887,13 +888,12 @@ def test_welcome_screen_on_every_launch_and_shortcuts_only_when_ticked(qapp, mon
 
 
 def test_opening_the_app_again_shows_the_panel_of_the_running_one(qapp, monkeypatch):
-    tray_app, _ = make_tray_app(monkeypatch, Config(show_panel=False))
+    tray_app, _ = make_tray_app(monkeypatch)
     monkeypatch.setattr(app_module, "INSTANCE_KEY", f"ScreenTranslator-test-{id(tray_app)}")
     assert not app_module._wake_running_instance()
     app_module._listen_for_wake(tray_app)
     assert app_module._wake_running_instance()
     wait_until(qapp, lambda: tray_app.panel.isVisible())
-    assert tray_app.config.show_panel
     tray_app.panel.hide()
     tray_app.hotkeys.clear()
 
@@ -940,7 +940,7 @@ def test_live_mode_puts_the_control_panel_away_until_esc(qapp, monkeypatch):
 
     panel.buttons["live"].click()
     assert tray_app.live_timer.isActive() and not panel.isVisible() and not tray_app._panel_action.isChecked()
-    assert tray_app.config.show_panel and "Esc" in messages[-1]  # chỉ cất tạm: mở app lại thanh vẫn hiện
+    assert "Esc" in messages[-1]
     hotkeys.triggered.emit("escape")
     assert not tray_app.live_timer.isActive() and panel.isVisible() and panel.pos() == QPoint(40, 50)
     assert tray_app._panel_action.isChecked()
@@ -950,7 +950,7 @@ def test_live_mode_puts_the_control_panel_away_until_esc(qapp, monkeypatch):
     assert panel.isVisible()
     panel.buttons["close"].click()  # rồi tự ẩn thanh: tắt live mode xong thanh không hiện lại
     hotkeys.triggered.emit("escape")
-    assert not tray_app.live_timer.isActive() and not panel.isVisible() and not tray_app.config.show_panel
+    assert not tray_app.live_timer.isActive() and not panel.isVisible()
     tray_app.overlay.hide()
     hotkeys.clear()
 
@@ -986,5 +986,5 @@ def test_control_panel_does_everything_by_mouse(qapp, monkeypatch):
     assert ControlPanel(QMenu(), vertical=True).vertical  # mở app lại vẫn xếp như lần trước
 
     panel.buttons["close"].click()
-    assert not panel.isVisible() and not tray_app.config.show_panel and not tray_app._panel_action.isChecked()
+    assert not panel.isVisible() and not tray_app._panel_action.isChecked()
     tray_app.hotkeys.clear()
