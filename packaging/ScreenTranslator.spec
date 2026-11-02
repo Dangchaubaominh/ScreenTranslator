@@ -35,6 +35,9 @@ exe = EXE(
 COLLECT(exe, used(analysis.binaries), used(analysis.datas), name=NAME)
 
 output = Path(DISTPATH) / NAME
+# bản chạy từ mã nguồn ghi đường dẫn thư mục dự án vào đây; bản phát hành không cần
+for build_path in output.glob("_internal/screen_translator-*.dist-info/direct_url.json"):
+    build_path.unlink()
 shutil.copy(ROOT / "LICENSE", output)
 shutil.copy(HERE / "THIRD-PARTY-NOTICES.txt", output)
 shutil.copytree(HERE / "licenses", output / "licenses", dirs_exist_ok=True)
