@@ -1,15 +1,17 @@
 """Gom các dòng chữ OCR thành khối (câu thoại bị ngắt dòng, đoạn mô tả…) để dịch cả khối một lần.
 
 Chữ ngang (game): các dòng nối tiếp nhau từ trên xuống. Chữ dọc (bóng thoại manga): mỗi cột OneOCR trả về một
-dòng; các cột sát nhau là một bóng, đọc từ phải sang trái.
+dòng; các cột sát nhau là một bóng, đọc từ phải sang trái. Truyện Trung, Hàn thì bóng thoại là chữ ngang canh giữa.
 """
 
 import re
 from dataclasses import dataclass
 from functools import reduce
 
-# hiragana, katakana, kanji, katakana nửa độ rộng
-_JAPANESE = re.compile(r"[぀-ヿ㐀-鿿ｦ-ﾟ]")
+_HANGUL = "가-힣ㄱ-ㆎ"  # âm tiết và chữ cái rời (ㅋㅋ, ㅠㅠ)
+# hiragana, katakana, chữ Hán, katakana nửa độ rộng, chữ Hàn
+_CJK = re.compile(rf"[぀-ヿ㐀-鿿ｦ-ﾟ{_HANGUL}]")
+_KOREAN = re.compile(rf"[{_HANGUL}]")
 WRAP_RATIO = 6  # dòng rộng hơn 6 lần chiều cao mới có thể là dòng bị ngắt giữa câu; nhãn ngắn thì không
 MAX_GAP = 0.6  # khoảng trống tối đa giữa hai dòng của cùng một khối, tính theo chiều cao dòng (cột: bề rộng cột)
 COLUMN_RATIO = 1.5  # dòng cao hơn 1,5 lần bề rộng là một cột chữ dọc (từ 2 chữ trở lên)
@@ -35,8 +37,9 @@ class TextBox:
         return self.bottom - self.top
 
 
-def has_japanese(text: str) -> bool:
-    return bool(_JAPANESE.search(text))
+def has_cjk(text: str) -> bool:
+    """Có chữ Nhật, Trung hoặc Hàn. Không phân biệt được: chuỗi ngắn như 設定 viết giống nhau ở cả tiếng Nhật và Trung."""
+    return bool(_CJK.search(text))
 
 
 def similar(a: str, b: str) -> bool:
@@ -59,21 +62,32 @@ def similar(a: str, b: str) -> bool:
 
 
 def _join(a: str, b: str) -> str:
-    """Tiếng Nhật viết liền khi xuống dòng; chỉ chèn dấu cách giữa hai chữ Latin."""
+    """Tiếng Nhật, Trung viết liền khi xuống dòng; chỉ chèn dấu cách giữa hai chữ Latin và cạnh chữ Hàn."""
     latin = a[-1:].isascii() and a[-1:].isalnum() and b[:1].isascii() and b[:1].isalnum()
-    return f"{a} {b}" if latin else a + b
+    return f"{a} {b}" if latin or _KOREAN.match(a[-1:]) or _KOREAN.match(b[:1]) else a + b
+
+
+def _below(last: TextBox, line: TextBox) -> bool:
+    """`line` ở ngay bên dưới `last` và cùng cỡ chữ."""
+    h = max(last.height, line.height, 1)
+    return 0.7 <= line.height / max(last.height, 1) <= 1.4 and -0.2 * h <= line.top - last.bottom <= MAX_GAP * h
 
 
 def _continues(block: list[TextBox], line: TextBox) -> bool:
     """`line` là phần tiếp theo của khối: ngay bên dưới, cùng lề trái, cùng cỡ chữ, dòng trên đã chạy dài."""
     last = block[-1]
-    h = max(last.height, line.height, 1)
     return (
-        last.width >= WRAP_RATIO * last.height
-        and 0.7 <= line.height / max(last.height, 1) <= 1.4
-        and -0.2 * h <= line.top - last.bottom <= MAX_GAP * h
-        and abs(line.left - block[0].left) <= h
+        _below(last, line)
+        and last.width >= WRAP_RATIO * last.height
+        and abs(line.left - block[0].left) <= max(last.height, line.height, 1)
     )
+
+
+def _same_bubble(block: list[TextBox], line: TextBox) -> bool:
+    """Bóng thoại chữ ngang: dòng có thể rất ngắn và lệch lề vì canh giữa, chỉ cần sát nhau và chồng theo chiều ngang."""
+    last = block[-1]
+    overlap = min(last.right, line.right) - max(last.left, line.left)
+    return _below(last, line) and overlap >= 0.5 * min(last.width, line.width)
 
 
 def _next_column(block: list[TextBox], column: TextBox) -> bool:
@@ -114,8 +128,12 @@ def _group(lines: list[TextBox], belongs) -> list[list[TextBox]]:
     return blocks
 
 
-def group_lines(lines: list[TextBox]) -> list[TextBox]:
-    """Khối chữ ngang theo thứ tự từ trên xuống, rồi tới các bóng thoại chữ dọc từ phải sang trái."""
+def group_lines(lines: list[TextBox], language: str = "ja") -> list[TextBox]:
+    """Khối chữ ngang theo thứ tự từ trên xuống, rồi tới các bóng thoại chữ dọc từ phải sang trái.
+
+    Tiếng Nhật giữ riêng các dòng ngắn (nhãn menu); tiếng Trung, Hàn gom lại vì đó thường là một bóng thoại chữ ngang.
+    """
     rows = sorted((b for b in lines if not _is_column(b)), key=lambda b: (b.top, b.left))
     columns = sorted((b for b in lines if _is_column(b)), key=lambda b: (-b.right, b.top))
-    return [_merge(block) for block in _group(rows, _continues) + _group(columns, _next_column)]
+    belongs = _continues if language == "ja" else _same_bubble
+    return [_merge(block) for block in _group(rows, belongs) + _group(columns, _next_column)]

@@ -1,10 +1,10 @@
-"""Đọc chữ tiếng Nhật trong ảnh bằng OneOCR, trả về từng dòng kèm vị trí.
+"""Đọc chữ Nhật, Trung, Hàn trong ảnh bằng OneOCR, trả về từng dòng kèm vị trí.
 
 OneOCR là engine OCR có sẵn trong Snipping Tool của Windows 11. Chạy CPU, đọc cả màn hình ~0,2–0,5 s, đúng cả logo
 cách điệu và chữ xám mờ trên ảnh game thật. Là thành phần nội bộ của Microsoft: chỉ chép file một lần, Snipping Tool
 đời sau có thể đổi file làm thư viện oneocr không đọc được; khi đó app báo lỗi.
 
-Chữ Nhật nhỏ (trang manga thu nhỏ trên web) đọc sai nhiều hơn, nên phóng to ảnh rồi đọc lại. Chỉ làm khi chữ nhỏ:
+Chữ nhỏ (trang manga thu nhỏ trên web) đọc sai nhiều hơn, nên phóng to ảnh rồi đọc lại. Chỉ làm khi chữ nhỏ:
 phóng to chữ đã đủ to thì đọc kém đi.
 """
 
@@ -17,7 +17,7 @@ from statistics import median
 import numpy as np
 from PIL import Image, ImageOps
 
-from .layout import TextBox, has_japanese
+from .layout import TextBox, has_cjk
 
 log = logging.getLogger(__name__)
 
@@ -25,7 +25,7 @@ ONEOCR_DIR = Path.home() / ".config" / "oneocr"  # thư viện oneocr đọc fil
 ONEOCR_FILES = ("oneocr.dll", "oneocr.onemodel", "onnxruntime.dll")
 ONEOCR_MIN_SIZE = 50  # OneOCR bỏ qua ảnh nhỏ hơn 50 px mỗi chiều
 MARGIN = 16  # viền thêm quanh ảnh: chữ sát mép vùng chọn vẫn đọc được
-TEXT_PX = 22  # chữ Nhật thấp hơn chừng này thì phóng to ảnh cho chữ cao đúng chừng này rồi đọc lại
+TEXT_PX = 22  # chữ thấp hơn chừng này thì phóng to ảnh cho chữ cao đúng chừng này rồi đọc lại
 MIN_UPSCALE = 1.1  # chữ chỉ thiếu chút xíu thì thôi: đọc lại tốn gấp đôi thời gian mà không được gì
 MAX_UPSCALE = 3  # chữ nhỏ tới đâu cũng không phóng to quá mức này: ảnh cả màn hình sẽ quá nặng
 
@@ -90,8 +90,8 @@ def lines_from_result(result: dict, offset: int, size: tuple[int, int], scale: f
 
 
 def upscale_for(lines: list[TextBox]) -> float:
-    """Cần phóng to ảnh bao nhiêu lần để chữ Nhật đủ cao; 1 nếu đã đủ hoặc không có chữ Nhật."""
-    sizes = [min(b.width, b.height) for b in lines if len(b.text) >= 2 and has_japanese(b.text)]
+    """Cần phóng to ảnh bao nhiêu lần để chữ đủ cao; 1 nếu đã đủ hoặc không có chữ cần dịch."""
+    sizes = [min(b.width, b.height) for b in lines if len(b.text) >= 2 and has_cjk(b.text)]
     scale = TEXT_PX / median(sizes) if sizes else 1
     return min(scale, MAX_UPSCALE) if scale >= MIN_UPSCALE else 1
 

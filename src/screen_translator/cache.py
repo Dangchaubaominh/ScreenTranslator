@@ -25,7 +25,7 @@ class TranslationCache:
                 "CREATE TABLE IF NOT EXISTS translations_v2"
                 " (model TEXT, ja TEXT, glossary TEXT, en TEXT, PRIMARY KEY (model, ja, glossary))"
             )
-        self._recent: OrderedDict[tuple[str, str, str], str] = OrderedDict()  # (model, chữ Nhật, glossary) → bản dịch
+        self._recent: OrderedDict[tuple[str, str, str], str] = OrderedDict()  # (model, chữ gốc, glossary) → bản dịch
 
     def get(self, model: str, ja: str, *, glossary: str = "") -> str | None:
         row = self._db.execute(

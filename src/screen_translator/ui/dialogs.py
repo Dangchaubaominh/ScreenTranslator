@@ -29,14 +29,14 @@ class EditDialog(QDialog):
         self._ja.selectionChanged.connect(self._on_selection)
         self._en = QPlainTextEdit(readOnly=True)
 
-        self._term = TermForm("Chữ Nhật", "Tên đúng, tiếng Anh", self._add_term)
+        self._term = TermForm("Chữ gốc", "Tên đúng, tiếng Anh", self._add_term)
         self._term_message = QLabel(objectName="hint", wordWrap=True)
         self._term_message.hide()
 
         # không nút nào là nút mặc định: Enter ở hàng thêm tên chỉ để thêm tên
         translate_button = QPushButton("Dịch lại", objectName="primary", autoDefault=False)
         translate_button.clicked.connect(self._retranslate)
-        copy_ja = QPushButton("Copy chữ Nhật", autoDefault=False)
+        copy_ja = QPushButton("Copy chữ gốc", autoDefault=False)
         copy_ja.clicked.connect(lambda: QGuiApplication.clipboard().setText(self._ja.toPlainText()))
         copy_en = QPushButton("Copy bản dịch", autoDefault=False)
         copy_en.clicked.connect(lambda: QGuiApplication.clipboard().setText(self._en.toPlainText()))
@@ -46,11 +46,11 @@ class EditDialog(QDialog):
             buttons.addWidget(button)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(16, 14, 16, 14)
-        layout.addWidget(QLabel("Chữ tiếng Nhật (sửa được nếu OCR đọc sai):"))
+        layout.addWidget(QLabel("Chữ gốc (sửa được nếu OCR đọc sai):"))
         layout.addWidget(self._ja)
         layout.addWidget(QLabel("Bản dịch:"))
         layout.addWidget(self._en)
-        layout.addWidget(QLabel("Tên dịch sai: bôi đen tên đó ở ô chữ Nhật, gõ tên đúng rồi Enter."))
+        layout.addWidget(QLabel("Tên dịch sai: bôi đen tên đó ở ô chữ gốc, gõ tên đúng rồi Enter."))
         layout.addLayout(self._term)
         layout.addWidget(self._term_message)
         layout.addLayout(buttons)
@@ -89,7 +89,7 @@ class EditDialog(QDialog):
         if entry is None:
             return
         if not valid_ja(entry.ja):
-            self._show_term_message("Chữ Nhật không được có dấu = hay bắt đầu bằng #.", error=True)
+            self._show_term_message("Chữ gốc không được có dấu = hay bắt đầu bằng #.", error=True)
             return
         try:
             update_file(GLOSSARY_PATH, [], [entry])

@@ -15,7 +15,7 @@ from PySide6.QtCore import QObject, Signal
 from .cache import TranslationCache
 from .config import APP_DIR, GLOSSARY_PATH, Config
 from .glossary import Entry, Glossary, exact, relevant, signature
-from .layout import group_lines, has_japanese, similar
+from .layout import group_lines, has_cjk, similar
 from .ocr import OneOcrReader
 from .translate import tidy, translate, unload
 
@@ -67,7 +67,7 @@ class Worker(QObject):
         # live mode: chữ đang hiện trên overlay, và chữ đọc được ở lần trước lúc hình còn đang đổi
         self._live_shown: tuple[str, ...] | None = None
         self._live_pending: tuple[str, ...] | None = None
-        # các lượt thoại vừa hiện (chữ Nhật, bản dịch), mỗi lượt là cả khung thoại (tên người nói + lời thoại)
+        # các lượt thoại vừa hiện (chữ gốc, bản dịch), mỗi lượt là cả khung thoại (tên người nói + lời thoại)
         self._context: deque[tuple[str, str]] = deque(maxlen=CONTEXT_TURNS)
         self._thread = threading.Thread(target=self._run, name="ocr-translate", daemon=True)
 
@@ -146,13 +146,14 @@ class Worker(QObject):
     def _process(self, job_id: int, kind: str, payload) -> None:
         start = time.perf_counter()
         if kind == "text":
-            items = [Item(payload.strip())] if has_japanese(payload) else []
+            items = [Item(payload.strip())] if has_cjk(payload) else []
         elif self._reader is None:
             self.failed.emit(job_id, "Chưa nạp được OCR, xem file log.")
             return
         else:
             image = payload[0] if kind == "live" else payload
-            blocks = [b for b in group_lines(self._reader.read_lines(image)) if has_japanese(b.text)]
+            lines = self._reader.read_lines(image)
+            blocks = [b for b in group_lines(lines, self._config.language) if has_cjk(b.text)]
             items = [Item(b.text, box=(b.left, b.top, b.right, b.bottom)) for b in blocks]
         ocr_s = time.perf_counter() - start
         key = tuple(item.ja for item in items)
@@ -173,7 +174,7 @@ class Worker(QObject):
             if kind == "page":  # cuộn tới chỗ không có chữ: bỏ bản dịch cũ đi
                 self.result.emit(job_id, [], True)
             else:
-                self.failed.emit(job_id, "Không thấy chữ tiếng Nhật trong vùng này.")
+                self.failed.emit(job_id, "Không thấy chữ cần dịch trong vùng này.")
             return
 
         glossary = self._read_glossary()
@@ -223,7 +224,8 @@ class Worker(QObject):
 
     def _ask_model(self, ja: str, **extra) -> str:
         cfg = self._config
-        return translate(self._client, cfg.model, ja, options=cfg.ollama_options, keep_alive=cfg.keep_alive, **extra)[0]
+        options = {"options": cfg.ollama_options, "keep_alive": cfg.keep_alive}
+        return translate(self._client, cfg.model, ja, language=cfg.language, **options, **extra)[0]
 
     def _translate(self, ja: str, glossary: list[Entry], context: list[tuple[str, str]]) -> str:
         try:
@@ -263,6 +265,8 @@ class Worker(QObject):
 
     def _apply(self, config: Config) -> None:
         old, self._config = self._config, config
+        if config.language != old.language:
+            self._context.clear()  # câu thoại của ngôn ngữ cũ không giúp gì cho câu mới
         if (config.model, config.ollama_options) != (old.model, old.ollama_options):
             self._unload(old.model)
             self._warm_up()

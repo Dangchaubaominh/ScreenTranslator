@@ -43,6 +43,7 @@ from ..config import FONT_PX_RANGE, GLOSSARY_PATH, HOTKEY_LABELS, OPACITY_RANGE,
 from ..glossary import Entry, Glossary, clean, ensure_file, update_file, valid_ja
 from ..hotkeys import parse_hotkey
 from ..shortcuts import LABELS as SHORTCUT_LABELS
+from ..translate import LANGUAGES, MULTI_LANGUAGE_MODEL
 from .overlay import Appearance, fit_text, paint_block
 from .panel import glyph_icon
 
@@ -276,7 +277,7 @@ class KindBox(ComboBox):
 
 
 class TermForm(QHBoxLayout):
-    """Hàng thêm một tên riêng: chữ Nhật, tiếng Anh, loại, nút Thêm. Enter ở hai ô chữ cũng là bấm Thêm."""
+    """Hàng thêm một tên riêng: chữ gốc, tiếng Anh, loại, nút Thêm. Enter ở hai ô chữ cũng là bấm Thêm."""
 
     def __init__(self, ja_hint: str, en_hint: str, on_add):
         super().__init__()
@@ -321,16 +322,16 @@ class GlossaryEditor(QWidget):
 
         self._message = _label("", "error")
         self._message.hide()
-        self._form = TermForm("Chữ Nhật, vd. 霊夢", "Tiếng Anh, vd. Reimu", self._add)
+        self._form = TermForm("Chữ gốc, vd. 霊夢", "Tiếng Anh, vd. Reimu", self._add)
         self._add_card, form = _card("Thêm mục")
         form.addLayout(self._form)
 
-        self._search = QLineEdit(placeholderText="Tìm theo chữ Nhật hoặc tiếng Anh…")
+        self._search = QLineEdit(placeholderText="Tìm theo chữ gốc hoặc tiếng Anh…")
         self._search.textChanged.connect(self._filter)
         notepad = QPushButton("Sửa bằng Notepad", autoDefault=False)
         notepad.clicked.connect(self._open_file)
         self._table = QTableWidget(0, 4)
-        self._table.setHorizontalHeaderLabels(["Chữ Nhật", "Tiếng Anh", "Loại", ""])
+        self._table.setHorizontalHeaderLabels(["Chữ gốc", "Tiếng Anh", "Loại", ""])
         self._table.verticalHeader().hide()
         self._table.verticalHeader().setDefaultSectionSize(34)
         self._table.setShowGrid(False)
@@ -398,7 +399,7 @@ class GlossaryEditor(QWidget):
         return self._form.ja.text().strip() + self._form.en.text().strip()
 
     def _add(self) -> None:
-        """Thêm mục đang gõ; chữ Nhật đã có trong bảng thì sửa dòng đó."""
+        """Thêm mục đang gõ; chữ gốc đã có trong bảng thì sửa dòng đó."""
         entry = self._form.entry()
         if entry is None:
             return
@@ -463,15 +464,15 @@ class GlossaryEditor(QWidget):
         if self._form_text():
             self._add()
             if self._form_text():
-                return f"Mục mới còn thiếu {'tiếng Anh' if self._form.ja.text().strip() else 'chữ Nhật'}."
+                return f"Mục mới còn thiếu {'tiếng Anh' if self._form.ja.text().strip() else 'chữ gốc'}."
         seen = set()
         for row, entry in enumerate(self._rows()):
             if not entry.ja and not entry.en:
                 continue
             if not entry.ja or not entry.en:
-                message = f"Dòng {row + 1}: thiếu {'tiếng Anh' if entry.ja else 'chữ Nhật'}."
+                message = f"Dòng {row + 1}: thiếu {'tiếng Anh' if entry.ja else 'chữ gốc'}."
             elif not valid_ja(entry.ja):
-                message = f"Dòng {row + 1}: chữ Nhật không được có dấu = hay bắt đầu bằng #."
+                message = f"Dòng {row + 1}: chữ gốc không được có dấu = hay bắt đầu bằng #."
             elif entry.ja in seen:
                 message = f"「{entry.ja}」đang có hai dòng."
             else:
@@ -519,6 +520,13 @@ class MainWindow(QDialog):
         self._model = ComboBox(editable=True)
         self._model.addItems(installed_models)
         self._model.setCurrentText(config.model)
+        self._language = ComboBox()
+        for key, language in LANGUAGES.items():
+            self._language.addItem(language["label"], key)
+        self._language.setCurrentIndex(self._language.findData(config.language))
+        self._language.currentIndexChanged.connect(
+            lambda: self._model.setCurrentText(LANGUAGES[self._language.currentData()]["model"])
+        )
         self._profile = ComboBox()
         for key, profile in PROFILES.items():
             self._profile.addItem(profile["label"], key)
@@ -558,7 +566,7 @@ class MainWindow(QDialog):
         side.addLayout(brand)
         side.addSpacing(14)
         side.addWidget(self._nav, 1)
-        side.addWidget(_label("Dịch chữ Nhật trên màn hình, chạy hoàn toàn trên máy.", "tagline"))
+        side.addWidget(_label("Dịch chữ Nhật, Trung, Hàn, chạy hoàn toàn trên máy.", "tagline"))
 
         self._error = _label("", "error")
         primary = QPushButton("Bắt đầu" if welcome else "Lưu", objectName="primary")
@@ -643,7 +651,7 @@ class MainWindow(QDialog):
             "Chuẩn bị một lần",
             [
                 (f"Cài {link}. Đã cài rồi thì mở nó lên.", None),
-                (f"Mở Terminal, chạy lệnh tải model dịch (model mặc định khoảng 2,2 GB):<br>{pull}", None),
+                (f"Mở Terminal, chạy lệnh tải model dịch (khoảng 2–3 GB):<br>{pull}", None),
                 ("Bấm <b>Bắt đầu</b> rồi dịch thử.", None),
             ],
         )
@@ -656,7 +664,7 @@ class MainWindow(QDialog):
         tips, layout = _card("Mẹo")
         for text in (
             "<b>Esc</b> xóa bản dịch đang hiện (bấm lần nữa thì game nhận Esc).",
-            "Xem chữ Nhật gốc: kéo thanh <b>Trong suốt</b>, hoặc bấm nút ẩn / hiện bản dịch trên thanh.",
+            "Xem chữ gốc: kéo thanh <b>Trong suốt</b>, hoặc bấm nút ẩn / hiện bản dịch trên thanh.",
             "Tên dịch sai: menu <b>…</b> → <i>Sửa chữ OCR gần nhất</i>, bôi đen tên rồi gõ tên đúng.",
             "Chơi mà không dịch: menu <b>…</b> → <i>Tạm dừng</i> trả phím tắt cho game, gỡ model khỏi card đồ họa.",
             "Icon <b>訳</b> ở khay hệ thống: chuột trái ẩn / hiện thanh điều khiển, chuột phải mở menu.",
@@ -720,13 +728,21 @@ class MainWindow(QDialog):
     def _settings_page(self) -> QScrollArea:
         card, layout = _card("Dịch")
         for label, field in (
+            ("Ngôn ngữ trên màn hình", self._language),
             ("Model dịch (Ollama)", self._model),
             ("Hồ sơ hiệu năng", self._profile),
         ):
             layout.addWidget(_label(label, wrap=False))
             layout.addWidget(field)
             layout.addSpacing(4)
-        return self._page("Cài đặt", "Model dịch, hồ sơ hiệu năng và cách mở app.", card, self.startup)
+        note = _label(
+            "Đổi ngôn ngữ thì model đổi theo. VNTL chỉ dịch tiếng Nhật; tiếng Trung và tiếng Hàn cần tải thêm:"
+            f"<br><b>ollama pull {MULTI_LANGUAGE_MODEL}</b>",
+            "hint",
+        )
+        note.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        layout.addWidget(note)
+        return self._page("Cài đặt", "Ngôn ngữ, model dịch, hồ sơ hiệu năng và cách mở app.", card, self.startup)
 
     def _appearance_page(self) -> QScrollArea:
         self._preview = OverlayPreview()
@@ -775,7 +791,7 @@ class MainWindow(QDialog):
             layout.addWidget(_label(label, wrap=False))
             layout.addLayout(row)
             layout.addSpacing(4)
-        layout.addWidget(_label("Trên 50% thì chữ có viền cho dễ đọc; chữ Nhật gốc lộ ra sau bản dịch.", "hint"))
+        layout.addWidget(_label("Trên 50% thì chữ có viền cho dễ đọc; chữ gốc lộ ra sau bản dịch.", "hint"))
         return self._page("Chỉnh màu", "Màu nền, cỡ chữ và độ trong suốt của khung bản dịch.", preview, card)
 
     # --- kết quả ---
@@ -784,6 +800,7 @@ class MainWindow(QDialog):
         """Các cài đặt sửa được trong cửa sổ này (để ghép vào cài đặt mới nhất của app)."""
         return {
             "model": self._model.currentText().strip(),
+            "language": self._language.currentData(),
             "profile": self._profile.currentData(),
             "overlay_font_px": self._font_px.value(),
             "overlay_opacity": 100 - self._transparency.value(),

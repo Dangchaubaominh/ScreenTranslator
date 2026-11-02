@@ -1,4 +1,4 @@
-from screen_translator.layout import TextBox, group_lines, has_japanese, similar
+from screen_translator.layout import TextBox, group_lines, has_cjk, similar
 
 # Các dòng OneOCR đọc được trên ảnh chụp game thật (4.webp, 1.png), giữ nguyên tọa độ
 
@@ -76,9 +76,40 @@ def test_horizontal_lines_and_vertical_columns_on_one_page():
     assert len(group_lines([TextBox("はい", 14, 0, 24, 30), TextBox("!", 0, 0, 10, 30)])) == 2
 
 
-def test_has_japanese():
-    assert has_japanese("ログ▲") and has_japanese("ｽｷｯﾌﾟ") and has_japanese("1日目")
-    assert not has_japanese("ver 1.00") and not has_japanese("HP") and not has_japanese("×")
+# Bóng thoại chữ ngang của truyện Trung, Hàn: dòng canh giữa nên lệch lề và có thể rất ngắn
+
+CENTERED_BUBBLE = [
+    TextBox("정말로", 140, 100, 200, 122),
+    TextBox("그렇게 생각해?", 100, 126, 240, 148),
+    TextBox("왜?", 155, 152, 185, 174),
+]
+
+
+def test_centered_lines_of_a_horizontal_bubble_are_joined():
+    assert [b.text for b in group_lines(CENTERED_BUBBLE, "ko")] == ["정말로 그렇게 생각해? 왜?"]
+    assert len(group_lines(CENTERED_BUBBLE)) == 3  # tiếng Nhật: dòng ngắn lệch lề là nhãn menu
+
+
+def test_horizontal_bubbles_apart_stay_separate():
+    lines = [
+        TextBox("안녕", 100, 100, 160, 122),
+        TextBox("반가워", 300, 126, 380, 148),  # bóng bên cạnh: thấp hơn một dòng nhưng không chồng theo chiều ngang
+        TextBox("잘 가", 100, 300, 160, 322),  # bóng bên dưới: cách xa
+    ]
+    assert len(group_lines(lines, "ko")) == 3
+
+
+def test_wrapped_chinese_stays_together_and_wrapped_korean_keeps_its_space():
+    chinese = [TextBox("今天的天气", 0, 0, 100, 20), TextBox("真不错", 0, 24, 60, 44)]
+    assert group_lines(chinese, "zh")[0].text == "今天的天气真不错"
+    korean = [TextBox("눈이 조용히", 0, 0, 100, 20), TextBox("흩날리고 있었다", 0, 24, 130, 44)]
+    assert group_lines(korean, "ko")[0].text == "눈이 조용히 흩날리고 있었다"
+
+
+def test_has_cjk():
+    assert has_cjk("ログ▲") and has_cjk("ｽｷｯﾌﾟ") and has_cjk("1日目")
+    assert has_cjk("你好") and has_cjk("안녕하세요") and has_cjk("ㅋㅋㅋ")
+    assert not has_cjk("ver 1.00") and not has_cjk("HP") and not has_cjk("×")
 
 
 def test_similar_tolerates_ocr_slips_but_not_a_different_line():

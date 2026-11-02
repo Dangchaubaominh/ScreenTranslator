@@ -30,6 +30,7 @@ def fake(monkeypatch):
         "translated": [],
         "glossaries": [],
         "contexts": [],
+        "languages": [],
         "unloaded": [],
         "release": threading.Event(),
         "fail": {},
@@ -47,6 +48,7 @@ def fake(monkeypatch):
         state["translated"].append((model, ja, kwargs["options"]))
         state["glossaries"].append(kwargs.get("glossary"))
         state["contexts"].append((ja, kwargs.get("context")))
+        state["languages"].append(kwargs.get("language"))
         return f"「{ja}」 in English", None
 
     monkeypatch.setattr(worker_module, "OneOcrReader", FakeReader)
@@ -166,6 +168,30 @@ def test_dialogue_is_translated_with_the_turns_before_it(qapp, fake):
     ]
 
 
+def test_korean_page_is_grouped_and_translated_in_the_chosen_language(qapp, fake):
+    w, events = start(qapp, Config(language="ko", model="qwen3.5:4b"))
+    w.submit_image(
+        screen(TextBox("정말로", 140, 100, 200, 122), TextBox("그렇게 생각해?", 100, 126, 240, 148), VERSION)
+    )
+    wait_until(qapp, lambda: finished(events))
+    w.stop()
+    assert [item.ja for item in finished(events)[0][1]] == ["정말로 그렇게 생각해?"]
+    assert fake["languages"][-1] == "ko"
+
+
+def test_switching_language_forgets_the_dialogue_before_it(qapp, fake):
+    w, events = start(qapp)
+    w.submit_image(screen(TextBox("おはよう", 410, 810, 600, 846)), dialogue=True)
+    wait_until(qapp, lambda: len(finished(events)) == 1)
+    w.reconfigure(replace(Config(), language="zh"))
+    w.submit_image(screen(TextBox("早上好", 410, 810, 600, 846)), dialogue=True)
+    wait_until(qapp, lambda: len(finished(events)) == 2)
+    w.stop()
+    assert fake["contexts"][-1] == ("早上好", [])
+    assert fake["languages"][-1] == "zh"
+    assert fake["unloaded"] == [Config().model]  # cùng model: không nạp lại, chỉ gỡ lúc thoát
+
+
 def test_page_scan_marks_speech_bubbles_and_an_empty_page_just_clears(qapp, fake):
     w, events = start(qapp)
     empty = w.submit_page(screen(VERSION))  # cuộn tới tranh không lời
@@ -201,7 +227,7 @@ def test_errors_are_reported_in_plain_words(qapp, fake):
     wait_until(qapp, lambda: len(events["failed"]) == 2)
     w.stop()
     assert events["failed"] == [
-        (empty, "Không thấy chữ tiếng Nhật trong vùng này."),
+        (empty, "Không thấy chữ cần dịch trong vùng này."),
         (job, "Không kết nối được Ollama. Hãy mở Ollama (chưa có thì cài từ ollama.com) rồi thử lại."),
     ]
 

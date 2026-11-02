@@ -15,16 +15,16 @@ def test_broken_file_gives_defaults(tmp_path):
 
 def test_save_then_load(tmp_path):
     path = tmp_path / "sub" / "config.json"
-    config = Config(model="qwen2.5:3b", profile="heavy", hotkey_select="Ctrl+Shift+Q")
+    config = Config(model="qwen2.5:3b", language="ko", profile="heavy", hotkey_select="Ctrl+Shift+Q")
     save(config, path)
     assert load(path) == config
 
 
 def test_unknown_keys_and_bad_values_are_ignored(tmp_path):
     path = tmp_path / "config.json"
-    data = {"model": "x", "profile": "ultra", "ocr_engine": "manga-ocr", "show_panel": False}  # hai cài đặt cũ đã bỏ
-    path.write_text(json.dumps(data), encoding="utf-8")
-    assert load(path) == Config(model="x", profile="light")
+    data = {"model": "x", "profile": "ultra", "language": "fr", "ocr_engine": "manga-ocr", "show_panel": False}
+    path.write_text(json.dumps(data), encoding="utf-8")  # ocr_engine, show_panel: hai cài đặt cũ đã bỏ
+    assert load(path) == Config(model="x", profile="light", language="ja")
 
 
 def test_overlay_settings_are_kept_in_range(tmp_path):

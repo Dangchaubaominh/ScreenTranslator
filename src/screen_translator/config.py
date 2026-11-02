@@ -6,7 +6,7 @@ import re
 from dataclasses import asdict, dataclass, fields, replace
 from pathlib import Path
 
-from .translate import DEFAULT_MODEL
+from .translate import DEFAULT_MODEL, LANGUAGES
 
 APP_DIR = Path(os.environ.get("APPDATA", Path.home())) / "ScreenTranslator"
 CONFIG_PATH = APP_DIR / "config.json"
@@ -42,6 +42,7 @@ OPACITY_RANGE = (0, 100)
 @dataclass(frozen=True)
 class Config:
     model: str = DEFAULT_MODEL
+    language: str = "ja"  # ngôn ngữ của chữ trên màn hình, một khóa của LANGUAGES
     profile: str = "light"
     hotkey_select: str = "Ctrl+Alt+T"
     hotkey_screen: str = "Ctrl+Alt+F"
@@ -50,7 +51,7 @@ class Config:
     hotkey_toggle: str = "Ctrl+Alt+H"
     hotkey_edit: str = "Ctrl+Alt+E"
     overlay_font_px: int = 34  # cỡ chữ lớn nhất của bản dịch; khung nhỏ thì chữ tự thu nhỏ cho vừa
-    overlay_opacity: int = 100  # % độ đặc của nền; thấp hơn thì chữ Nhật gốc lộ ra sau bản dịch
+    overlay_opacity: int = 100  # % độ đặc của nền; thấp hơn thì chữ gốc lộ ra sau bản dịch
     overlay_color: str = "#0c101c"
     panel_vertical: bool = False  # thanh xếp thành cột dọc thay vì hàng ngang
     panel_pos: tuple[int, int] | None = None  # chỗ thanh điều khiển (tọa độ logic); None: giữa mép trên màn hình
@@ -81,6 +82,7 @@ def load(path: Path = CONFIG_PATH) -> Config:
     valid_pos = isinstance(pos, list | tuple) and len(pos) == 2 and all(isinstance(v, int) for v in pos)
     return replace(
         config,
+        language=config.language if config.language in LANGUAGES else Config.language,
         profile=config.profile if config.profile in PROFILES else Config.profile,
         overlay_color=config.overlay_color if valid_color else Config.overlay_color,
         panel_pos=tuple(pos) if valid_pos else None,

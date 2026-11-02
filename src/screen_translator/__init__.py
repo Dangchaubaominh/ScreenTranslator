@@ -1,4 +1,4 @@
-"""ScreenTranslator: dịch chữ tiếng Nhật trên màn hình sang tiếng Anh, chạy offline (OneOCR + Ollama)."""
+"""ScreenTranslator: dịch chữ Nhật, Trung, Hàn trên màn hình sang tiếng Anh, chạy offline (OneOCR + Ollama)."""
 
 import argparse
 import logging
@@ -40,7 +40,7 @@ def translate_file(path: Path) -> None:
 
     from . import config
     from .glossary import Glossary
-    from .layout import group_lines, has_japanese
+    from .layout import group_lines, has_cjk
     from .ocr import OneOcrReader
     from .translate import tidy, translate
 
@@ -49,11 +49,17 @@ def translate_file(path: Path) -> None:
     reader = OneOcrReader()
     client = ollama.Client()
     start = time.perf_counter()
-    blocks = [b for b in group_lines(reader.read_lines(Image.open(path))) if has_japanese(b.text)]
+    blocks = [b for b in group_lines(reader.read_lines(Image.open(path)), cfg.language) if has_cjk(b.text)]
     ocr_s = time.perf_counter() - start
     for b in blocks:
         en, _ = translate(
-            client, cfg.model, b.text, glossary=glossary, options=cfg.ollama_options, keep_alive=cfg.keep_alive
+            client,
+            cfg.model,
+            b.text,
+            glossary=glossary,
+            language=cfg.language,
+            options=cfg.ollama_options,
+            keep_alive=cfg.keep_alive,
         )
         print(f"[{b.left},{b.top}–{b.right},{b.bottom}] {b.text}\n  → {tidy(en)}")
     print(

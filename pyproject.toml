@@ -1,7 +1,7 @@
 [project]
 name = "screen-translator"
 version = "0.1.0"
-description = "Dịch chữ tiếng Nhật trên màn hình sang tiếng Anh, chạy offline (OCR + Ollama)"
+description = "Dịch chữ Nhật, Trung, Hàn trên màn hình sang tiếng Anh, chạy offline (OCR + Ollama)"
 readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]

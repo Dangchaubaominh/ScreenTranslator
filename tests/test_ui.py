@@ -293,6 +293,18 @@ def test_settings_saves_valid_hotkeys(qapp):
     assert dialog.result_config() == Config(hotkey_select="Ctrl+Shift+Q")
 
 
+def test_choosing_a_language_switches_the_model(qapp):
+    dialog = MainWindow(Config(), [])
+    dialog._language.setCurrentIndex(dialog._language.findData("ko"))
+    config = dialog.result_config()
+    assert (config.language, config.model) == ("ko", "qwen3.5:4b")
+    dialog._language.setCurrentIndex(dialog._language.findData("ja"))
+    assert dialog.result_config().model == Config().model
+    # mở lại cài đặt: model đã tự chọn không bị đổi về model nên dùng của ngôn ngữ đó
+    saved = Config(language="zh", model="qwen2.5:3b")
+    assert MainWindow(saved, []).result_config() == saved
+
+
 def test_settings_display_tab(qapp):
     dialog = MainWindow(Config(), [], {"start_menu": True, "desktop": False, "autostart": False})
     dialog.show_page("appearance")
@@ -641,7 +653,7 @@ def test_glossary_enter_adds_instead_of_closing_the_window(qapp, tmp_path):
     ("change", "message"),
     [
         (lambda table: table.item(0, 1).setText(""), "Dòng 1: thiếu tiếng Anh"),
-        (lambda table: table.item(1, 0).setText(""), "Dòng 2: thiếu chữ Nhật"),
+        (lambda table: table.item(1, 0).setText(""), "Dòng 2: thiếu chữ gốc"),
         (lambda table: table.item(1, 0).setText("霊夢"), "hai dòng"),
         (lambda table: table.item(1, 0).setText("a=b"), "dấu ="),
         (lambda table: table.item(1, 0).setText("#魔理沙"), "bắt đầu bằng #"),

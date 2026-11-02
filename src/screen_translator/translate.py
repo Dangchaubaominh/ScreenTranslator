@@ -1,4 +1,7 @@
-"""Dịch JA→EN qua Ollama. Mỗi loại model cần một kiểu prompt riêng."""
+"""Dịch sang tiếng Anh qua Ollama. Mỗi loại model cần một kiểu prompt riêng.
+
+Trong code, `ja` là chữ gốc cần dịch: tên có từ lúc app chỉ dịch tiếng Nhật, giờ là ngôn ngữ đang chọn ở Cài đặt.
+"""
 
 from collections.abc import Sequence
 
@@ -8,11 +11,14 @@ from .glossary import Entry, exact, relevant, substitute, vntl_metadata
 
 DEFAULT_MODEL = "hf.co/lmg-anon/vntl-gemma2-2b-gguf:Q6_K"
 
-SYSTEM_PROMPT = (
-    "You are a professional translator of Japanese visual novels and manga. "
-    "Translate the user's Japanese text into natural English. "
-    "Output only the English translation, nothing else."
-)
+MULTI_LANGUAGE_MODEL = "qwen3.5:4b"  # VNTL chỉ dịch tiếng Nhật
+
+# mã ngôn ngữ → tên hiện ở Cài đặt, tên trong prompt, model nên dùng
+LANGUAGES = {
+    "ja": {"label": "Tiếng Nhật", "name": "Japanese", "model": DEFAULT_MODEL},
+    "zh": {"label": "Tiếng Trung", "name": "Chinese", "model": MULTI_LANGUAGE_MODEL},
+    "ko": {"label": "Tiếng Hàn", "name": "Korean", "model": MULTI_LANGUAGE_MODEL},
+}
 
 _STYLE_OPTIONS = {
     "vntl": {"temperature": 0},
@@ -38,20 +44,30 @@ def style_of(tag: str) -> str:
 
 
 def vntl_prompt(ja: str, glossary: Sequence[Entry] = (), context: Sequence[tuple[str, str]] = ()) -> str:
-    """context: các câu trước (chữ Nhật, bản dịch) xếp nối tiếp như lúc VNTL được huấn luyện, xem trang model."""
+    """context: các câu trước (chữ gốc, bản dịch) xếp nối tiếp như lúc VNTL được huấn luyện, xem trang model."""
     history = "".join(f"<<JAPANESE>>\n{prev_ja}\n<<ENGLISH>>\n{prev_en}<eos>\n" for prev_ja, prev_en in context)
     return f"<<METADATA>>\n{vntl_metadata(glossary)}<<TRANSLATE>>\n{history}<<JAPANESE>>\n{ja}\n<<ENGLISH>>\n"
 
 
-def translategemma_prompt(ja: str) -> str:
+def translategemma_prompt(ja: str, language: str = "ja") -> str:
     # Mẫu prompt cố định trên trang model ở ollama.com; phải có hai dòng trống trước đoạn cần dịch
+    name = LANGUAGES[language]["name"]
     return (
-        "You are a professional Japanese (ja) to English (en) translator. "
-        "Your goal is to accurately convey the meaning and nuances of the original Japanese text "
+        f"You are a professional {name} ({language}) to English (en) translator. "
+        f"Your goal is to accurately convey the meaning and nuances of the original {name} text "
         "while adhering to English grammar, vocabulary, and cultural sensitivities.\n"
         "Produce only the English translation, without any additional explanations or commentary. "
-        "Please translate the following Japanese text into English:\n\n\n"
+        f"Please translate the following {name} text into English:\n\n\n"
         f"{ja}"
+    )
+
+
+def system_prompt(language: str = "ja") -> str:
+    name = LANGUAGES[language]["name"]
+    return (
+        f"You are a professional translator of {name} games and comics. "
+        f"Translate the user's {name} text into natural English. "
+        "Output only the English translation, nothing else."
     )
 
 
@@ -76,6 +92,7 @@ def translate(
     *,
     glossary: Sequence[Entry] = (),
     context: Sequence[tuple[str, str]] = (),
+    language: str = "ja",
     options: dict | None = None,
     keep_alive: str = "30m",
 ):
@@ -83,7 +100,7 @@ def translate(
 
     glossary: cả danh sách tên riêng / thuật ngữ, chỉ các mục có trong `ja` vào prompt. Cả đoạn trùng một mục
     thì trả luôn bản dịch khai sẵn, phản hồi là None.
-    context: vài câu thoại ngay trước (chữ Nhật, bản dịch) để model hiểu mạch hội thoại: ai nói với ai, xưng hô,
+    context: vài câu thoại ngay trước (chữ gốc, bản dịch) để model hiểu mạch hội thoại: ai nói với ai, xưng hô,
     chủ ngữ bị lược. Mẫu prompt cố định của translategemma và LFM2 không có chỗ cho ngữ cảnh, nên bỏ qua.
     """
     terms = relevant(glossary, ja)
@@ -105,7 +122,7 @@ def translate(
 
     source = substitute(ja, terms)  # các model khác không có chỗ khai báo tên: thay thẳng trong câu
     if style == "translategemma":
-        messages = [{"role": "user", "content": translategemma_prompt(source)}]
+        messages = [{"role": "user", "content": translategemma_prompt(source, language)}]
     elif style == "lfm2":
         messages = [{"role": "system", "content": "Translate to English."}, {"role": "user", "content": source}]
     else:
@@ -114,7 +131,11 @@ def translate(
             for prev_ja, prev_en in context
             for role, text in (("user", prev_ja), ("assistant", prev_en))
         ]
-        messages = [{"role": "system", "content": SYSTEM_PROMPT}, *history, {"role": "user", "content": source}]
+        messages = [
+            {"role": "system", "content": system_prompt(language)},
+            *history,
+            {"role": "user", "content": source},
+        ]
     think = {"think": False} if tag.lower().startswith("qwen3") else {}
     r = client.chat(model=tag, messages=messages, options=opts, keep_alive=keep_alive, **think)
     return keep_lines(r.message.content, ja), r

@@ -22,8 +22,8 @@ _LINE = re.compile(r"(?P<ja>[^=＝]+?)\s*[=＝]\s*(?P<en>.+?)(?:\s*\((?P<gender>
 TEMPLATE = """\
 # Tên riêng và thuật ngữ dùng khi dịch. Sửa xong lưu lại (UTF-8) là lần dịch sau dùng ngay.
 #
-# Tên người:  chữ Nhật = tên tiếng Anh (nữ)     ghi (nữ) hoặc (nam) để bản dịch dùng đúng she / he
-# Thuật ngữ:  chữ Nhật = tiếng Anh
+# Tên người:  chữ gốc = tên tiếng Anh (nữ)     ghi (nữ) hoặc (nam) để bản dịch dùng đúng she / he
+# Thuật ngữ:  chữ gốc = tiếng Anh
 # Khối chữ trùng hẳn một mục (nhãn menu, tên phòng…) thì dùng luôn bản dịch ở đây, không qua model.
 #
 # Ví dụ (bỏ dấu # ở đầu dòng để dùng):
@@ -40,14 +40,14 @@ class Entry:
 
 
 def parse(text: str) -> list[Entry]:
-    """Đọc nội dung glossary.txt. Một chữ Nhật khai hai lần thì lấy dòng sau."""
+    """Đọc nội dung glossary.txt. Một chữ gốc khai hai lần thì lấy dòng sau."""
     found: dict[str, Entry] = {}
     for number, line in enumerate(unicodedata.normalize("NFC", text).splitlines(), start=1):
         line = line.strip()
         if not line or line.startswith("#"):
             continue
         if not (m := _LINE.fullmatch(line)):
-            log.warning("Glossary dòng %d bỏ qua, cần dạng 'chữ Nhật = tiếng Anh': %s", number, line)
+            log.warning("Glossary dòng %d bỏ qua, cần dạng 'chữ gốc = tiếng Anh': %s", number, line)
             continue
         gender = GENDERS[m["gender"].lower()] if m["gender"] else None
         found[m["ja"]] = Entry(m["ja"], m["en"], gender)
@@ -77,7 +77,7 @@ def vntl_metadata(entries: Sequence[Entry]) -> str:
 
 
 def substitute(text: str, entries: Sequence[Entry]) -> str:
-    """Thay thẳng chữ Nhật bằng tiếng Anh, cho model không có chỗ khai báo tên. Mục dài thay trước."""
+    """Thay thẳng chữ gốc bằng tiếng Anh, cho model không có chỗ khai báo tên. Mục dài thay trước."""
     for e in sorted(entries, key=lambda e: -len(e.ja)):
         text = text.replace(e.ja, e.en)
     return text
@@ -102,7 +102,7 @@ def clean(text: str) -> str:
 
 
 def valid_ja(ja: str) -> bool:
-    """Chữ Nhật ghi được thành một dòng của file: không có dấu bằng, không giống dòng ghi chú."""
+    """Chữ gốc ghi được thành một dòng của file: không có dấu bằng, không giống dòng ghi chú."""
     return not (ja.startswith("#") or "=" in ja or "＝" in ja)
 
 

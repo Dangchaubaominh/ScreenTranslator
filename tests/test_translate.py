@@ -4,10 +4,10 @@ import pytest
 
 from screen_translator.glossary import Entry
 from screen_translator.translate import (
-    SYSTEM_PROMPT,
     keep_lines,
     max_tokens,
     style_of,
+    system_prompt,
     tidy,
     translate,
     vntl_prompt,
@@ -100,7 +100,16 @@ def test_qwen3_disables_thinking():
     assert text == "Hi."
     _, call = client.calls[0]
     assert call["think"] is False
-    assert call["messages"][0] == {"role": "system", "content": SYSTEM_PROMPT}
+    assert call["messages"][0] == {"role": "system", "content": system_prompt("ja")}
+
+
+def test_prompts_name_the_chosen_language():
+    client = FakeClient()
+    translate(client, "qwen3.5:4b", "你好", language="zh")
+    translate(client, "translategemma:4b", "안녕", language="ko")
+    chat, gemma = (call["messages"][0]["content"] for _, call in client.calls)
+    assert "Chinese" in chat and "Japanese" not in chat
+    assert "Korean (ko) to English (en)" in gemma and "Japanese" not in gemma
 
 
 def test_other_chat_models_get_no_think_flag():
