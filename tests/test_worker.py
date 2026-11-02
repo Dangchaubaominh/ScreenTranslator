@@ -177,7 +177,7 @@ def test_page_scan_marks_speech_bubbles_and_an_empty_page_just_clears(qapp, fake
     assert finished(events)[0] == (empty, [], True) and events["failed"] == []
     assert finished(events)[1] == (
         page,
-        [Item("えっ…本当に?", "“えっ…本当に?” in English", (1140, 767, 1191, 862), True)],
+        [Item("えっ…本当に?", "“えっ…本当に?” in English", (1140, 767, 1191, 862))],
         True,
     )
     assert fake["contexts"][-1] == ("えっ…本当に?", [])  # trang manga: không dính ngữ cảnh khung thoại game

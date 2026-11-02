@@ -18,14 +18,13 @@ SIMILAR_PER = 10  # hai lần đọc cùng một câu được lệch 1 ký tự
 
 @dataclass(frozen=True)
 class TextBox:
-    """Một dòng hoặc một khối chữ và khung bao của nó, tính bằng pixel trong ảnh. vertical: khối chữ dọc."""
+    """Một dòng hoặc một khối chữ và khung bao của nó, tính bằng pixel trong ảnh."""
 
     text: str
     left: int
     top: int
     right: int
     bottom: int
-    vertical: bool = False
 
     @property
     def width(self) -> int:
@@ -94,14 +93,13 @@ def _is_column(line: TextBox) -> bool:
     return len(line.text) >= 2 and line.height >= COLUMN_RATIO * line.width
 
 
-def _merge(block: list[TextBox], vertical: bool) -> TextBox:
+def _merge(block: list[TextBox]) -> TextBox:
     return TextBox(
         reduce(_join, (b.text for b in block)),
         min(b.left for b in block),
         min(b.top for b in block),
         max(b.right for b in block),
         max(b.bottom for b in block),
-        vertical,
     )
 
 
@@ -120,6 +118,4 @@ def group_lines(lines: list[TextBox]) -> list[TextBox]:
     """Khối chữ ngang theo thứ tự từ trên xuống, rồi tới các bóng thoại chữ dọc từ phải sang trái."""
     rows = sorted((b for b in lines if not _is_column(b)), key=lambda b: (b.top, b.left))
     columns = sorted((b for b in lines if _is_column(b)), key=lambda b: (-b.right, b.top))
-    return [_merge(block, False) for block in _group(rows, _continues)] + [
-        _merge(block, True) for block in _group(columns, _next_column)
-    ]
+    return [_merge(block) for block in _group(rows, _continues) + _group(columns, _next_column)]

@@ -32,13 +32,11 @@ class Item:
     """Một khối chữ và bản dịch của nó (None khi chưa dịch xong).
 
     box: (trái, trên, phải, dưới) tính bằng pixel trong ảnh đã gửi; None khi dịch chữ gõ tay.
-    vertical: chữ dọc (bóng thoại manga), khung bản dịch phải nới ngang ra mới đủ chỗ cho chữ tiếng Anh.
     """
 
     ja: str
     en: str | None = None
     box: tuple[int, int, int, int] | None = None
-    vertical: bool = False
 
 
 def describe_error(error: Exception, model: str) -> str:
@@ -155,7 +153,7 @@ class Worker(QObject):
         else:
             image = payload[0] if kind == "live" else payload
             blocks = [b for b in group_lines(self._reader.read_lines(image)) if has_japanese(b.text)]
-            items = [Item(b.text, box=(b.left, b.top, b.right, b.bottom), vertical=b.vertical) for b in blocks]
+            items = [Item(b.text, box=(b.left, b.top, b.right, b.bottom)) for b in blocks]
         ocr_s = time.perf_counter() - start
         key = tuple(item.ja for item in items)
         if kind == "live":

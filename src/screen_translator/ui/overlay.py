@@ -6,7 +6,7 @@ Một overlay vẽ được nhiều khối (dịch cả cửa sổ game: mỗi d
 from functools import lru_cache, reduce
 from typing import NamedTuple
 
-from PySide6.QtCore import QRect, QSize, Qt
+from PySide6.QtCore import QPoint, QRect, QSize, Qt
 from PySide6.QtGui import QColor, QFont, QFontMetrics, QPainter
 from PySide6.QtWidgets import QWidget
 
@@ -20,6 +20,8 @@ LINE_HEIGHT = 1.35  # chiều cao một dòng chữ Segoe UI / cỡ chữ
 HINT_PX, HINT_WIDTH = 15, 480  # thông báo ngắn tự tắt
 GAP = 6  # khoảng hở giữa vùng đang dịch và thông báo ngắn đặt ngay trên nó
 BLOCK_GAP = 2  # khoảng hở giữa các khung bản dịch khi dịch cả cửa sổ
+BUBBLE_WIDTH = 0.8  # khối chữ dọc hẹp và cao: khung bản dịch nới rộng tới chừng này lần chiều cao, nếu còn chỗ trống
+MOVED_WIDTH = 200  # bề rộng khung bản dịch khi quanh khối chữ hết chỗ, phải dời đi chỗ khác
 FONT_FAMILY = "Segoe UI"
 TEXT_FLAGS = Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter | Qt.TextFlag.TextWordWrap
 BACKGROUND = QColor(12, 16, 28)  # nền đặc: chữ Nhật gốc không lộ ra sau bản dịch
@@ -72,7 +74,7 @@ def _measure(px: int, width: int, text: str) -> tuple[int, int]:
 
 
 def _padding(rect: QRect) -> int:
-    return max(2, min(PADDING, rect.height() // 5))  # nhãn menu nhỏ thì lề nhỏ
+    return max(2, min(PADDING, rect.height() // 5, rect.width() // 8))  # nhãn menu nhỏ, cột chữ hẹp thì lề nhỏ
 
 
 def _largest_fit(
@@ -111,58 +113,110 @@ def fit_text(rect: QRect, text: str, max_px: int = MAX_PX) -> Fitted:
     return Fitted(_font(MIN_PX), grown, padding, padding)
 
 
-def _free_room(rect: QRect, bounds: QRect, obstacles: list[QRect]) -> tuple[QRect, QRect]:
-    """Chỗ trống quanh `rect` không chạm `obstacles`: (nới sang phải, nới sang phải rồi xuống dưới)."""
-    right = bounds.right() + 1
-    for other in obstacles:  # khối cùng hàng, bên phải
-        if other.left() > rect.right() and other.top() <= rect.bottom() and other.bottom() >= rect.top():
-            right = min(right, other.left() - BLOCK_GAP)
-    right = max(right, rect.right() + 1)
-    bottom = bounds.bottom() + 1
-    for other in obstacles:  # khối bên dưới, chồng lên khoảng ngang vừa nới
-        if other.top() > rect.bottom() and other.left() < right and other.right() >= rect.left():
-            bottom = min(bottom, other.top() - BLOCK_GAP)
-    bottom = max(bottom, rect.bottom() + 1)
-    return (
-        QRect(rect.x(), rect.y(), right - rect.x(), rect.height()),
-        QRect(rect.x(), rect.y(), right - rect.x(), bottom - rect.y()),
-    )
+def _free_span(low: int, high: int, limit_low: int, limit_high: int, others: list[tuple[int, int]]) -> tuple[int, int]:
+    """Nới đoạn [low, high] ra hai phía, tới sát các đoạn `others` (chừa BLOCK_GAP) hoặc tới giới hạn."""
+    for other_low, other_high in others:
+        if other_low > high:
+            limit_high = min(limit_high, other_low - BLOCK_GAP - 1)
+        elif other_high < low:
+            limit_low = max(limit_low, other_high + BLOCK_GAP + 1)
+    return min(limit_low, low), max(limit_high, high)
+
+
+def _free_row(rect: QRect, bounds: QRect, obstacles: list[QRect]) -> QRect:
+    """Nới `rect` sang hai bên vào chỗ trống, không đổi chiều cao."""
+    same_row = [(o.left(), o.right()) for o in obstacles if o.top() <= rect.bottom() and o.bottom() >= rect.top()]
+    left, right = _free_span(rect.left(), rect.right(), bounds.left(), bounds.right(), same_row)
+    return QRect(QPoint(left, rect.top()), QPoint(right, rect.bottom()))
+
+
+def _free_column(rect: QRect, bounds: QRect, obstacles: list[QRect]) -> QRect:
+    """Nới `rect` lên trên và xuống dưới vào chỗ trống, không đổi bề ngang."""
+    same_column = [(o.top(), o.bottom()) for o in obstacles if o.left() <= rect.right() and o.right() >= rect.left()]
+    top, bottom = _free_span(rect.top(), rect.bottom(), bounds.top(), bounds.bottom(), same_column)
+    return QRect(QPoint(rect.left(), top), QPoint(rect.right(), bottom))
+
+
+def _free_spot(rect: QRect, width: int, height: int, bounds: QRect, obstacles: list[QRect]) -> QRect | None:
+    """Chỗ trống gần `rect` nhất đặt vừa khung cỡ (width, height), nếu có. Chỉ cần xét các chỗ sát mép hay sát khối khác."""
+    xs, ys = {bounds.left(), bounds.right() + 1 - width}, {bounds.top(), bounds.bottom() + 1 - height}
+    for other in obstacles:
+        xs |= {other.left() - BLOCK_GAP - width, other.right() + BLOCK_GAP + 1}
+        ys |= {other.top() - BLOCK_GAP - height, other.bottom() + BLOCK_GAP + 1}
+    spots = (QRect(x, y, width, height) for x in xs for y in ys)
+    free = [s for s in spots if bounds.contains(s) and not any(s.intersects(other) for other in obstacles)]
+    return min(free, key=lambda s: (s.center() - rect.center()).manhattanLength(), default=None)
 
 
 def _fit_block(rect: QRect, text: str, max_px: int, bounds: QRect, obstacles: list[QRect]) -> Fitted:
+    row = _free_row(rect, bounds, obstacles)
+    # cột chữ dọc hẹp và cao, bản dịch chữ ngang cần khung rộng hơn: nới đều hai bên, sát khối khác thì lệch đi
+    wanted = round(rect.height() * BUBBLE_WIDTH)
+    width = min(row.width(), max(rect.width(), wanted))
+    box = clamp(QRect(rect.x() - (width - rect.width()) // 2, rect.y(), width, rect.height()), row)
     # khung OCR ôm sát chữ (nhãn menu chỉ cao ~18 px): gần như không chừa lề trên / dưới, không thì chữ cỡ
     # MIN_PX không bao giờ vừa một dòng
-    padding = _padding(rect)
-    vpadding = min(padding, rect.height() // 12)
-    if found := _largest_fit(rect, text, max_px, MIN_PX, padding, vpadding):
-        return Fitted(_font(found[0]), rect, padding, vpadding)
-    # nới khung thì chữ không to hơn cỡ vừa một dòng chữ gốc, để khung chỉ to vừa đủ
-    natural = max(MIN_PX, min(max_px, int((rect.height() - 2 * vpadding) / LINE_HEIGHT)))
-    wide, tall = _free_room(rect, bounds, obstacles)
-    for room, min_px in ((wide, MIN_PX), (tall, MIN_PX), (tall, TINY_PX)):
+    padding = _padding(box)
+    vpadding = min(padding, box.height() // 12)
+    if found := _largest_fit(box, text, max_px, MIN_PX, padding, vpadding):
+        return Fitted(_font(found[0]), box, padding, vpadding)
+    # nới khung thì chữ không to hơn cỡ vừa một dòng chữ gốc, để khung chỉ to vừa đủ; không biết cỡ chữ của cột
+    # chữ dọc nên dùng cỡ nhỏ nhất
+    natural = MIN_PX if rect.width() < wanted else int((box.height() - 2 * vpadding) / LINE_HEIGHT)
+    natural = max(MIN_PX, min(max_px, natural))
+    rightwards = QRect(box.topLeft(), row.bottomRight())
+    downwards = _free_column(rightwards, bounds, obstacles)
+    downwards.setTop(box.top())
+    around = _free_column(row, bounds, obstacles)
+    for room, min_px in ((rightwards, MIN_PX), (downwards, MIN_PX), (around, MIN_PX), (around, TINY_PX)):
         if found := _largest_fit(room, text, natural, min_px, padding, vpadding):
             px, w, h = found
             # +2: chữ vẽ lại trong khung đúng bề rộng đo được không bị xuống dòng thêm vì làm tròn
-            box = QRect(rect.x(), rect.y(), min(room.width(), max(rect.width(), w + 2)), max(rect.height(), h))
-            return Fitted(_font(px), box, padding, vpadding)
-    return fit_text(rect, text, max_px)  # hết chỗ trống: đành nới đè lên khối bên cạnh
+            size = QSize(min(room.width(), max(box.width(), w + 2)), max(box.height(), h))
+            return Fitted(_font(px), clamp(QRect(box.topLeft(), size), room), padding, vpadding)
+    # quanh khối hết chỗ: dời bản dịch tới chỗ trống gần nhất; cả trang kín chỗ thì đành cắt bớt chữ, không đè khối khác
+    w, h = _measure(MIN_PX, max(box.width(), MOVED_WIDTH) - 2 * padding, text)
+    if spot := _free_spot(box, w + 2 * padding + 2, h + 2 * vpadding, bounds, obstacles):
+        return Fitted(_font(MIN_PX), spot, padding, vpadding)
+    return Fitted(_font(TINY_PX), around, padding, vpadding)
+
+
+def _separate(rects: list[QRect]) -> list[QRect]:
+    """Chia đôi phần chung nếu khung của hai khối chữ đè lên nhau (cột chữ hơi nghiêng), theo chiều phần chung hẹp."""
+    rects = [QRect(rect) for rect in rects]
+    for i, a in enumerate(rects):
+        for b in rects[i + 1 :]:
+            if not a.intersects(b):
+                continue
+            common = a.intersected(b)
+            if common.width() <= common.height():
+                first, second = (a, b) if a.center().x() <= b.center().x() else (b, a)
+                first.setRight(common.center().x() - 1)
+                second.setLeft(common.center().x() + 1)
+            else:
+                first, second = (a, b) if a.center().y() <= b.center().y() else (b, a)
+                first.setBottom(common.center().y() - 1)
+                second.setTop(common.center().y() + 1)
+    return rects
 
 
 def fit_blocks(blocks: list[tuple[QRect, str | None]], max_px: int, bounds: QRect) -> list[Fitted | None]:
     """Khung bản dịch cho từng khối chữ của cả cửa sổ, không khung nào đè lên khung khác.
 
-    Bản dịch dài hơn chữ gốc thì thu nhỏ chữ, rồi nới khung sang phải, rồi xuống dưới, nhưng chỉ vào chỗ trống:
-    không lấn lên chữ gốc của khối khác hay khung đã đặt. Khối chữ None (còn đang dịch) không vẽ nhưng vẫn
-    giữ chỗ chữ gốc của nó, để khung đã hiện không phải dời đi khi khối đó dịch xong.
+    Cột chữ dọc được nới ngang. Bản dịch dài hơn chữ gốc thì thu nhỏ chữ, rồi nới khung sang phải, xuống dưới, rồi ra
+    cả bốn phía, nhưng chỉ vào chỗ trống: không lấn lên chữ gốc của khối khác hay khung đã đặt. Khối chữ None (còn
+    đang dịch) không vẽ nhưng vẫn giữ chỗ chữ gốc của nó, để khung đã hiện không phải dời đi khi khối đó dịch xong.
     """
+    rects = _separate([rect for rect, _ in blocks])
     fitted: list[Fitted | None] = [None] * len(blocks)
     placed: list[QRect] = []
-    for i in sorted(range(len(blocks)), key=lambda i: (blocks[i][0].top(), blocks[i][0].left())):  # thứ tự đọc
-        rect, text = blocks[i]
+    waiting = set(range(len(blocks)))
+    for i in sorted(waiting, key=lambda i: (rects[i].top(), rects[i].left())):  # thứ tự đọc
+        text = blocks[i][1]
         if text is None:
             continue
-        obstacles = placed + [other for j, (other, _) in enumerate(blocks) if j != i]
-        fitted[i] = _fit_block(rect, text, max_px, bounds, obstacles)
+        waiting.remove(i)
+        fitted[i] = _fit_block(rects[i], text, max_px, bounds, placed + [rects[j] for j in waiting])
         placed.append(fitted[i].rect)
     return fitted
 

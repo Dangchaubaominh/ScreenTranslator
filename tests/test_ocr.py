@@ -1,12 +1,55 @@
+from types import SimpleNamespace
+
 import numpy as np
 from PIL import Image
 
 from screen_translator.layout import TextBox
-from screen_translator.ocr import lines_from_result, pad
+from screen_translator.ocr import MARGIN, OneOcrReader, lines_from_result, pad, upscale_for
 
 
 def rect(x1, y1, x2, y2):
     return {"x1": x1, "y1": y1, "x2": x2, "y2": y1, "x3": x2, "y3": y2, "x4": x1, "y4": y2}
+
+
+def read_with_fake_engine(line: TextBox, size=(200, 100)):
+    """Đọc ảnh bằng engine giả luôn thấy `line`; trả về các dòng đọc được và cỡ từng ảnh đã gửi cho engine."""
+    sent = []
+
+    def recognize_pil(image):
+        sent.append(image.size)
+        s = (image.width - 2 * MARGIN) / size[0]  # ảnh được phóng to thì chữ cũng to theo
+        box = rect(*(MARGIN + v * s for v in (line.left, line.top, line.right, line.bottom)))
+        return {"lines": [{"text": line.text, "bounding_rect": box}]}
+
+    reader = OneOcrReader.__new__(OneOcrReader)  # không cần file OneOCR thật
+    reader._engine = SimpleNamespace(recognize_pil=recognize_pil)
+    return reader.read_lines(Image.new("RGB", size, "white")), sent
+
+
+def test_small_japanese_text_is_read_again_on_a_bigger_image():
+    line = TextBox("火の雨を降らせ", 20, 10, 31, 90)  # cột chữ dọc rộng 11 px: phóng to 2 lần
+    lines, sent = read_with_fake_engine(line)
+    assert sent == [(232, 132), (432, 232)]
+    assert lines == [line]  # tọa độ vẫn tính theo ảnh gốc
+
+
+def test_text_big_enough_or_not_japanese_is_read_once():
+    for line in (
+        TextBox("屋敷で迎える", 20, 10, 180, 32),  # đủ cao
+        TextBox("屋敷で迎える", 20, 10, 180, 31),  # chỉ thiếu 1 px: phóng to không đáng tốn một lượt đọc
+        TextBox("ver 1.00", 20, 10, 80, 20),  # chữ giao diện không cần dịch
+        TextBox("蔵", 20, 10, 30, 20),  # một chữ: chưa đủ biết cỡ chữ của ảnh
+    ):
+        lines, sent = read_with_fake_engine(line)
+        assert lines == [line] and len(sent) == 1
+
+
+def test_upscale_follows_most_lines_and_has_a_limit():
+    small, big = TextBox("こんにちは", 0, 0, 200, 11), TextBox("こんにちは", 0, 0, 200, 40)
+    assert upscale_for([small, small, big]) == 2
+    assert upscale_for([small, big, big]) == 1
+    assert upscale_for([TextBox("こんにちは", 0, 0, 200, 3)]) == 3
+    assert upscale_for([]) == 1
 
 
 def test_small_crop_is_padded_with_its_background_color():

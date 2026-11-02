@@ -54,8 +54,8 @@ def test_columns_of_a_speech_bubble_are_read_right_to_left():
         TextBox("うるさい!", 792, 147, 813, 258),
     ]
     assert group_lines(lines) == [
-        TextBox("先生、それはちょっと無理があるんじゃないですか", 1113, 125, 1191, 335, vertical=True),
-        TextBox("うるさい!黙って聞け", 763, 145, 813, 258, vertical=True),
+        TextBox("先生、それはちょっと無理があるんじゃないですか", 1113, 125, 1191, 335),
+        TextBox("うるさい!黙って聞け", 763, 145, 813, 258),
     ]
 
 
@@ -71,11 +71,9 @@ def test_bubbles_next_to_each_other_stay_separate():
 
 def test_horizontal_lines_and_vertical_columns_on_one_page():
     lines = [TextBox("かしこまりました", 799, 468, 825, 630), TextBox("第3話 霊夢の休日", 700, 60, 1000, 84)]
-    assert [(b.text, b.vertical) for b in group_lines(lines)] == [
-        ("第3話 霊夢の休日", False),
-        ("かしこまりました", True),
-    ]
-    assert not group_lines([TextBox("!", 0, 0, 10, 30)])[0].vertical  # một ký tự: không biết là cột hay dòng
+    assert [b.text for b in group_lines(lines)] == ["第3話 霊夢の休日", "かしこまりました"]
+    # một ký tự: không biết là cột hay dòng, nên không nối vào cột bên cạnh
+    assert len(group_lines([TextBox("はい", 14, 0, 24, 30), TextBox("!", 0, 0, 10, 30)])) == 2
 
 
 def test_has_japanese():

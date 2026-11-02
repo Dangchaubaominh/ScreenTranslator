@@ -32,13 +32,6 @@ MIN_WINDOW = 100  # pixel; cửa sổ đang mở nhỏ hơn thế trên màn hì
 ICON_COLOR, LIVE_ICON_COLOR = QColor(59, 130, 246), QColor(22, 163, 74)  # xanh dương; xanh lá khi live mode bật
 LOADING_ICON_COLOR = QColor(128, 136, 150)  # xám: đang nạp OCR / model dịch, hoặc tạm dừng
 PAUSE_BADGE_COLOR = QColor(217, 119, 6)  # chấm cam có hai vạch khi tạm dừng
-BUBBLE_WIDTH = 0.8  # bóng thoại chữ dọc: khung bản dịch rộng ít nhất chừng này lần chiều cao cột chữ
-
-
-def widen_bubble(rect: QRect) -> QRect:
-    """Bóng thoại chữ dọc hẹp và cao; bản dịch chữ ngang cần khung rộng hơn, nới đều hai bên quanh giữa bóng."""
-    width = max(rect.width(), round(rect.height() * BUBBLE_WIDTH))
-    return QRect(rect.x() - (width - rect.width()) // 2, rect.y(), width, rect.height())
 
 
 def make_icon(color: QColor = ICON_COLOR, size: int = 64, *, paused: bool = False) -> QIcon:
@@ -348,8 +341,7 @@ class TrayApp(QObject):
         boxes = []
         for item in items:
             if item.box:
-                rect = QRect(*self.area.sub(*item.box).to_logical())
-                boxes.append((widen_bubble(rect) if item.vertical else rect, item.en))
+                boxes.append((QRect(*self.area.sub(*item.box).to_logical()), item.en))
         return boxes, True
 
     def _show_result(self, items: list[Item]) -> None:

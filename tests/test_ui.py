@@ -1,10 +1,11 @@
 import os
+import random
 from types import SimpleNamespace
 
 import pytest
 from conftest import wait_until
 from PIL import Image
-from PySide6.QtCore import QObject, QPoint, QPointF, QRect, Qt, QTimer, Signal
+from PySide6.QtCore import QObject, QPoint, QPointF, QRect, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import QTextCursor, QWheelEvent
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QDialog, QLabel, QLineEdit, QMenu, QPushButton, QSystemTrayIcon
@@ -95,6 +96,69 @@ def test_untranslated_block_keeps_its_space(qapp):
     restaurant, hall = QRect(20, 200, 60, 18), QRect(180, 200, 60, 18)
     fitted = fit_blocks([(restaurant, "Hayashida's restaurant"), (hall, None)], MAX_PX, QRect(0, 0, 800, 600))
     assert fitted[1] is None and not fitted[0].rect.intersects(hall)
+
+
+def test_manga_page_boxes_do_not_overlap(qapp):
+    # các khối OneOCR đọc được trên một trang manga thật và bản dịch thật của model, giữ nguyên tọa độ:
+    # hai khối cuối có khung OCR đè lên nhau, các cột chữ dọc sát nhau, khối cuối sát mép trái
+    page = QRect(0, 0, 660, 440)
+    blocks = [
+        (QRect(364, 248, 29, 16), "A sailor."),
+        (QRect(506, 269, 73, 24), "Commentary"),
+        (QRect(543, 3, 77, 171), "An enemy nation has attacked our country."),
+        (QRect(382, 227, 52, 104), "But our country has military aircraft."),
+        (QRect(248, 312, 52, 72), "Under the precise coordination of the ground guns..."),
+        (QRect(142, 19, 71, 121), "The enemy's army is being rained upon by the enemy's army."),
+        (QRect(38, 83, 53, 104), "The wood was reduced to ashes."),
+        (QRect(38, 296, 52, 129), "Waaah, help!"),
+        (QRect(7, 349, 41, 91), "I'm gonna do it."),
+    ]
+    boxes = [f.rect for f in fit_blocks(blocks, MAX_PX, page)]
+    assert overlapping(boxes) == []
+    assert all(page.contains(box) for box in boxes)
+    # vẫn nằm trên chữ gốc; khối cuối kẹt ở mép có thể bị dời đi tùy độ rộng font (test không có Segoe UI)
+    assert all(box.intersects(rect) for box, (rect, _) in zip(boxes[:-1], blocks, strict=False))
+
+
+def test_vertical_bubble_is_widened_into_free_space_only(qapp):
+    window = QRect(0, 0, 800, 600)
+    column = QRect(100, 50, 40, 200)
+    alone = fit_blocks([(column, "Hello.")], MAX_PX, window)[0].rect
+    assert alone.size() == QSize(160, 200) and abs(alone.center().x() - column.center().x()) <= 1
+    assert fit_blocks([(QRect(0, 0, 300, 100), "Hello.")], MAX_PX, window)[0].rect == QRect(0, 0, 300, 100)  # đủ rộng
+
+    # bên trái có cột khác (kể cả cột còn đang dịch) hoặc mép cửa sổ: nới lệch sang bên còn trống
+    for left in (QRect(50, 50, 40, 200), None):
+        blocks = [(column, "Hello.")] + ([(left, None)] if left else [])
+        beside = QRect(100, 0, 700, 600) if left is None else window
+        box = fit_blocks(blocks, MAX_PX, beside)[0].rect
+        assert box.width() == 160 and box.left() >= (left.right() if left else 100) and box.contains(column)
+
+
+def test_box_moves_to_free_space_when_there_is_no_room_around_it(qapp):
+    window = QRect(0, 0, 800, 600)
+    # ô hẹp bị các ô khác vây bốn phía: không đè ô nào, không ra ngoài cửa sổ, đọc được đủ chữ
+    walls = [QRect(100, 80, 200, 15), QRect(100, 110, 60, 15), QRect(190, 110, 110, 15), QRect(100, 140, 200, 15)]
+    narrow = QRect(170, 110, 15, 15)
+    fitted = fit_blocks([(narrow, LONG_TEXT[:80])] + [(wall, None) for wall in walls], MAX_PX, window)[0]
+    assert fitted.font.pixelSize() == MIN_PX and window.contains(fitted.rect)
+    assert not any(fitted.rect.intersects(wall) for wall in walls)
+    # cả cửa sổ kín chỗ: thà cắt bớt chữ chứ không đè lên ô khác
+    full = fit_blocks([(QRect(0, 0, 100, 20), LONG_TEXT), (QRect(0, 22, 100, 20), None)], MAX_PX, QRect(0, 0, 100, 42))
+    assert full[0].rect == QRect(0, 0, 100, 20)
+
+
+def test_random_pages_never_overlap(qapp):
+    window, rng = QRect(0, 0, 1280, 800), random.Random(1)
+    for _ in range(20):
+        blocks = []
+        for _ in range(rng.choice((5, 15, 30))):
+            w, h = (rng.randint(20, 80), rng.randint(40, 220)) if rng.random() < 0.7 else (rng.randint(30, 300), 20)
+            rect = QRect(rng.randint(0, window.width() - w), rng.randint(0, window.height() - h), w, h)
+            blocks.append((rect, LONG_TEXT[: rng.randint(5, 150)] if rng.random() > 0.1 else None))
+        boxes = [f.rect for f in fit_blocks(blocks, MAX_PX, window) if f]
+        assert overlapping(boxes) == []
+        assert all(window.contains(box) for box in boxes)
 
 
 def test_overlay_shows_text_over_the_region(qapp):
@@ -338,7 +402,7 @@ def test_live_mode_over_a_whole_window_follows_scrolling(qapp, monkeypatch):
     tray_app._live_tick()
     assert worker.jobs[-1] == "page"
     scan = tray_app.job
-    bubble = Item("先生、それはちょっと", "Teacher, that's a little far-fetched.", (1113, 125, 1191, 335), True)
+    bubble = Item("先生、それはちょっと", "Teacher, that's a little far-fetched.", (1113, 125, 1191, 335))
     worker.result.emit(scan, [bubble], True)
     assert watcher.boxes == [(1113, 125, 1191, 335)] and overlay.isVisible()
     assert overlay.width() >= 0.8 * 210  # bóng chữ dọc hẹp: khung bản dịch nới ngang ra
@@ -351,13 +415,6 @@ def test_live_mode_over_a_whole_window_follows_scrolling(qapp, monkeypatch):
     assert not overlay.isVisible()
     tray_app.toggle_live()
     tray_app.hotkeys.clear()
-
-
-def test_vertical_bubble_is_widened_around_its_middle():
-    column = QRect(100, 50, 40, 200)
-    wide = app_module.widen_bubble(column)
-    assert wide.width() == 160 and wide.height() == 200 and abs(wide.center().x() - column.center().x()) <= 1
-    assert app_module.widen_bubble(QRect(0, 0, 300, 100)) == QRect(0, 0, 300, 100)  # đã đủ rộng
 
 
 def test_live_mode_needs_a_region_first(qapp, monkeypatch):
