@@ -1,4 +1,5 @@
 import os
+from types import SimpleNamespace
 
 import pytest
 from conftest import wait_until
@@ -723,8 +724,13 @@ def test_window_translation_puts_each_block_over_its_own_text(qapp, monkeypatch)
     tray_app.hotkeys.clear()
 
 
+MAIN_MONITOR = app_module.capture.Monitor(0, 0, 1920, 1080)
+SIDE_MONITOR = app_module.capture.Monitor(-1920, 0, 1920, 1080)
+GAME_WINDOW = (-1800, 50, -200, 950)  # trên màn hình phụ
+
+
 def selected_region(tray_app):
-    monitor = app_module.capture.Monitor(0, 0, 1920, 1080)
+    monitor = MAIN_MONITOR
     area = app_module.capture.Region.from_physical(monitor, (0, 0), 1.0, 100, 300, 700, 400)
     tray_app._submit_image(area, Image.new("RGB", (600, 100)), selection=True)
     return area
@@ -832,6 +838,59 @@ def test_info_is_a_short_hint_and_errors_are_windows_popups(qapp, monkeypatch):
     tray_app.notify("Đã tắt live mode.")
     assert tray_app.hint.geometry().bottom() == 300 - GAP - 1  # ngay trên vùng đang dịch
     tray_app.hint.hide()
+    tray_app.overlay.hide()
+    tray_app.hotkeys.clear()
+
+
+def test_hint_stays_on_the_screen_of_its_area(qapp, monkeypatch):
+    tray_app, _ = make_tray_app(monkeypatch)
+    main, side = QRect(0, 0, 1536, 864), QRect(-1920, 0, 1920, 1080)  # màn hình phụ bên trái màn hình chính
+    screens = SimpleNamespace(
+        primaryScreen=lambda: SimpleNamespace(geometry=lambda: main),
+        screenAt=lambda point: next(
+            (SimpleNamespace(geometry=lambda rect=rect: rect) for rect in (main, side) if rect.contains(point)), None
+        ),
+    )
+    monkeypatch.setattr(app_module, "QGuiApplication", screens)
+    tray_app.area = app_module.capture.Region.from_physical(SIDE_MONITOR, (-1920, 0), 1.0, -1920, 0, 0, 1080)
+    app_module.TrayApp.notify(tray_app, "Đã bật live mode.")  # vùng sát mép trên: không còn chỗ phía trên nó
+    assert tray_app.hint.geometry().topLeft() == QPoint(-1920, 0)
+    tray_app.hint.hide()
+    tray_app.hotkeys.clear()
+
+
+def test_screen_at_pairs_each_monitor_with_its_qt_screen(qapp, monkeypatch):
+    for screen in qapp.screens():
+        geometry = screen.geometry()
+        monitor = app_module.capture.Monitor(geometry.x(), geometry.y(), geometry.width(), geometry.height())
+        monkeypatch.setattr(app_module.capture, "monitor_at", lambda x, y, monitor=monitor: monitor)
+        assert app_module.TrayApp._screen_at(0, 0) == (monitor, screen)
+
+
+@pytest.mark.parametrize(
+    ("cursor", "window", "monitor", "expected"),
+    [
+        ((100, 100), GAME_WINDOW, SIDE_MONITOR, GAME_WINDOW),  # chuột ở màn chính: vẫn dịch đúng cửa sổ game
+        ((-100, 100), GAME_WINDOW, SIDE_MONITOR, GAME_WINDOW),
+        ((100, 100), (-1920, 0, 1920, 1080), MAIN_MONITOR, (0, 0, 1920, 1080)),  # desktop trải hai màn: theo con trỏ
+        ((-100, 100), (-1920, 0, 1920, 1080), SIDE_MONITOR, (-1920, 0, 0, 1080)),
+        ((100, 100), (-1000, 1030, -700, 1070), SIDE_MONITOR, (-1920, 0, 0, 1080)),  # cửa sổ nhỏ quá: cả màn của nó
+        ((-100, 100), None, SIDE_MONITOR, (-1920, 0, 0, 1080)),  # đang ở cửa sổ của app: màn hình có con trỏ
+    ],
+)
+def test_translating_the_window_finds_it_on_any_monitor(qapp, monkeypatch, cursor, window, monitor, expected):
+    tray_app, _ = make_tray_app(monkeypatch)
+    monkeypatch.setattr(app_module.capture, "monitor_at", lambda x, y: SIDE_MONITOR if x < 0 else MAIN_MONITOR)
+    monkeypatch.setattr(app_module.capture, "grab", lambda area: Image.new("RGB", (area.width, area.height)))
+    monkeypatch.setattr(app_module.win32, "cursor_pos", lambda: cursor)
+    monkeypatch.setattr(app_module.win32, "foreground_window", lambda: 7)
+    monkeypatch.setattr(app_module.win32, "window_process_id", lambda hwnd: 0 if window else os.getpid())
+    monkeypatch.setattr(app_module.win32, "window_rect", lambda hwnd: window)
+    tray_app.translate_window()
+    area = tray_app.area
+    assert area.monitor == monitor and not tray_app.area_is_selection
+    assert (area.left, area.top, area.left + area.width, area.top + area.height) == expected
+    assert tray_app.worker.jobs[0].size == (area.width, area.height)
     tray_app.overlay.hide()
     tray_app.hotkeys.clear()
 

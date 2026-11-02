@@ -10,7 +10,7 @@ from dataclasses import replace
 import ollama
 from PIL import Image
 from PySide6.QtCore import QEvent, QObject, QPoint, QRect, QRectF, Qt, QTimer
-from PySide6.QtGui import QColor, QCursor, QFont, QGuiApplication, QIcon, QPainter, QPixmap, QScreen
+from PySide6.QtGui import QColor, QFont, QGuiApplication, QIcon, QPainter, QPixmap, QScreen
 from PySide6.QtNetwork import QLocalServer, QLocalSocket
 from PySide6.QtWidgets import QApplication, QDialog, QMenu, QSystemTrayIcon, QWidget
 
@@ -172,13 +172,14 @@ class TrayApp(QObject):
             self.tray.showMessage(APP_NAME, message, QSystemTrayIcon.MessageIcon.Warning)
             return
         size = hint_size(message)
+        screen = QGuiApplication.primaryScreen()
         if self.area is not None:  # ngay trên vùng đang dịch, chỗ người dùng đang nhìn
             x, y, _, _ = self.area.to_logical()
             rect = QRect(QPoint(x, y - GAP - size.height()), size)
+            screen = QGuiApplication.screenAt(QPoint(x, y)) or screen  # vùng sát mép trên: vẫn ở màn hình của vùng
         else:  # góc phải dưới, cạnh icon ở khay hệ thống
-            corner = QGuiApplication.primaryScreen().availableGeometry().bottomRight()
+            corner = screen.availableGeometry().bottomRight()
             rect = QRect(corner - QPoint(size.width() + 12, size.height() + 12), size)
-        screen = QGuiApplication.screenAt(rect.center()) or QGuiApplication.primaryScreen()
         self.hint.show_text(clamp(rect, screen.geometry()), message)
         self.hint_timer.start(min(8000, 2500 + 40 * len(message)))
 
@@ -239,15 +240,16 @@ class TrayApp(QObject):
     # --- chụp và gửi đi dịch ---
 
     @staticmethod
-    def _screen_at_cursor() -> tuple[capture.Monitor, QScreen]:
-        monitor = capture.monitor_at(*win32.cursor_pos())
-        screen = QGuiApplication.screenAt(QCursor.pos()) or QGuiApplication.primaryScreen()
+    def _screen_at(x: int, y: int) -> tuple[capture.Monitor, QScreen]:
+        """Màn hình chứa điểm (x, y) tính bằng pixel thật. Góc trên-trái màn hình tính theo Qt trùng với pixel thật."""
+        monitor = capture.monitor_at(x, y)
+        screen = QGuiApplication.screenAt(QPoint(monitor.left, monitor.top)) or QGuiApplication.primaryScreen()
         return monitor, screen
 
     def start_selection(self) -> None:
         if self.selector is not None:
             return
-        monitor, screen = self._screen_at_cursor()
+        monitor, screen = self._screen_at(*win32.cursor_pos())
         shot = capture.grab(monitor)  # chụp trước khi hiện màn chọn vùng
         self._previous_foreground = win32.foreground_window()
         self.selector = RegionSelector(screen, shot)
@@ -276,15 +278,25 @@ class TrayApp(QObject):
 
     def translate_window(self) -> None:
         """Dịch mọi chữ trong cửa sổ đang mở (game), mỗi dòng / đoạn một khung như Google Lens."""
-        monitor, screen = self._screen_at_cursor()
-        origin, dpr = screen.geometry().topLeft(), screen.devicePixelRatio()
-        whole = (monitor.left, monitor.top, monitor.left + monitor.width, monitor.top + monitor.height)
         hwnd = win32.foreground_window()
         rect = win32.window_rect(hwnd) if win32.window_process_id(hwnd) != os.getpid() else None
-        area = capture.Region.from_physical(monitor, (origin.x(), origin.y()), dpr, *(rect or whole))
-        if area.width < MIN_WINDOW or area.height < MIN_WINDOW:  # cửa sổ nằm ở màn hình khác: dịch cả màn hình
-            area = capture.Region.from_physical(monitor, (origin.x(), origin.y()), dpr, *whole)
+        area = self._window_area(rect)
         self._submit_image(area, self._grab(area), selection=False)
+
+    def _window_area(self, rect: tuple[int, int, int, int] | None) -> capture.Region:
+        """Phần cửa sổ `rect` (pixel thật) trên màn hình có con trỏ; cửa sổ ở màn hình khác thì theo màn hình của nó.
+
+        Không có cửa sổ, hoặc cửa sổ nhỏ quá (thanh taskbar…): dịch cả màn hình.
+        """
+        cursor = win32.cursor_pos()
+        for x, y in (cursor, ((rect[0] + rect[2]) // 2, (rect[1] + rect[3]) // 2) if rect else cursor):
+            monitor, screen = self._screen_at(x, y)
+            origin, dpr = screen.geometry().topLeft(), screen.devicePixelRatio()
+            whole = (monitor.left, monitor.top, monitor.left + monitor.width, monitor.top + monitor.height)
+            area = capture.Region.from_physical(monitor, (origin.x(), origin.y()), dpr, *(rect or whole))
+            if area.width >= MIN_WINDOW and area.height >= MIN_WINDOW:
+                return area
+        return capture.Region.from_physical(monitor, (origin.x(), origin.y()), dpr, *whole)
 
     def repeat(self) -> None:
         """Chụp lại vùng trước (hộp thoại game ở chỗ cũ, hoặc cả cửa sổ) và dịch chữ mới."""
