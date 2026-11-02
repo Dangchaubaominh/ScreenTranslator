@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
 
 from .. import win32
 from ..config import HOTKEY_LABELS
+from ..i18n import tr
 
 ICON_FONTS = ["Segoe Fluent Icons", "Segoe MDL2 Assets"]  # Windows 11 / Windows 10
 GLYPHS = {
@@ -117,13 +118,13 @@ class ControlPanel(QWidget):
         self._frame = QFrame(self, objectName="panel")
         QVBoxLayout(self._frame).setContentsMargins(0, 0, 0, 0)
         self._body: QWidget | None = None  # chứa các nút; xoay thanh thì xếp lại vào một body mới
-        self._grip = QLabel(toolTip="Kéo để dời thanh")
+        self._grip = QLabel(toolTip=tr("Kéo để dời thanh"))
         self._grip.setPixmap(glyph_icon(GLYPHS["grip"], 14, QColor(100, 116, 139)).pixmap(14, 14))
         self.status = QLabel()  # icon 訳 tô màu theo trạng thái, giống icon ở khay
 
         self.buttons: dict[str, QToolButton] = {}
         for action, (text, tip) in BUTTONS.items():
-            button = QToolButton(objectName=action, text=text, toolTip=tip)
+            button = QToolButton(objectName=action, text=tr(text), toolTip=tr(tip))
             if action in GLYPHS:
                 button.setIcon(glyph_icon(GLYPHS[action]))
             button.setIconSize(QSize(16, 16))
@@ -138,7 +139,7 @@ class ControlPanel(QWidget):
             self.buttons[action] = button
         self.buttons["live"].setCheckable(True)
 
-        self.transparency = QSlider(Qt.Orientation.Horizontal, toolTip="Độ trong suốt của nền bản dịch")
+        self.transparency = QSlider(Qt.Orientation.Horizontal, toolTip=tr("Độ trong suốt của nền bản dịch"))
         self.transparency.setRange(0, 100)
         self.transparency.setSingleStep(5)
         self.transparency.setPageStep(10)
@@ -147,7 +148,7 @@ class ControlPanel(QWidget):
         self.transparency_value = QLabel()
         self.transparency_value.setFixedWidth(40)  # vừa "100%"
         self.transparency.valueChanged.connect(self._on_transparency)
-        self._transparency_label = QLabel("Trong suốt")
+        self._transparency_label = QLabel(tr("Trong suốt"))
 
         outer = QHBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
@@ -193,7 +194,7 @@ class ControlPanel(QWidget):
         body.show()
         orient = self.buttons["orient"]
         orient.setIcon(glyph_icon(ORIENT_GLYPHS[vertical]))
-        orient.setToolTip("Xếp thanh nằm ngang" if vertical else "Xếp thanh thành cột dọc")
+        orient.setToolTip(tr("Xếp thanh nằm ngang") if vertical else tr("Xếp thanh thành cột dọc"))
         # tính lại layout ngay (bình thường Qt để tới vòng sự kiện sau), không thì cỡ cũ chặn thanh co lại
         self._frame.layout().activate()
         self.layout().activate()
@@ -202,7 +203,7 @@ class ControlPanel(QWidget):
     def set_hotkeys(self, hotkeys: dict[str, str]) -> None:
         for action, key in hotkeys.items():
             if action in self.buttons:
-                self.buttons[action].setToolTip(f"{BUTTONS[action][1]} ({key})")
+                self.buttons[action].setToolTip(f"{tr(BUTTONS[action][1])} ({key})")
 
     def set_state(self, *, live: bool, paused: bool, transparency: int) -> None:
         """Cập nhật nút theo trạng thái của app; không phát lại signal."""

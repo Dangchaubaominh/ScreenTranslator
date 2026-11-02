@@ -17,6 +17,7 @@ from statistics import median
 import numpy as np
 from PIL import Image, ImageOps
 
+from .i18n import tr
 from .layout import TextBox, has_cjk
 
 log = logging.getLogger(__name__)
@@ -99,7 +100,7 @@ def upscale_for(lines: list[TextBox]) -> float:
 class OneOcrReader:
     def __init__(self):
         if not install_oneocr():
-            raise RuntimeError("không tìm thấy OneOCR (cần Snipping Tool bản mới của Windows 11)")
+            raise RuntimeError(tr("không tìm thấy OneOCR (cần Snipping Tool bản mới của Windows 11)"))
         import oneocr
 
         self._engine = oneocr.OcrEngine()

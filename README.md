@@ -2,15 +2,15 @@
 
 Translate on-screen Japanese, Chinese or Korean into English entirely on your own computer: nothing is sent online and no API key is needed. Built for visual novels, and for manga, manhua and manhwa read on the web.
 
-> **Note:** the app's interface is in Vietnamese. Names from the interface appear below in Vietnamese, followed by their meaning.
+> **Note:** the interface is in Vietnamese by default. To switch to English, open the `Cài đặt` (Settings) page, choose **English** under `Ngôn ngữ giao diện` (Interface language), then click `Bắt đầu` (Start) or `Lưu` (Save). The names below are the English ones.
 
 ## Features
 
-- **Select a region** (`Chọn vùng`): drag around a dialogue box and the translation appears right on top of it.
+- **Select region:** drag around a dialogue box and the translation appears right on top of it.
 - **Live:** new lines in the region are translated automatically, with no key press.
-- **Whole window** (`Cả cửa sổ`): translate menus, buttons or a full manga page. Each speech bubble gets its own box, including vertical text.
-- **Three languages:** choose Japanese, Chinese or Korean on the `Cài đặt` (Settings) page. The app does not guess, because short text such as 設定 is written the same way in Japanese and Chinese.
-- **Names and terms** (`Tên riêng`): list character names and terms so the model always translates them the same way.
+- **Whole window:** translate menus, buttons or a full manga page. Each speech bubble gets its own box, including vertical text.
+- **Three languages:** choose Japanese, Chinese or Korean on the Settings page. The app does not guess, because short text such as 設定 is written the same way in Japanese and Chinese.
+- **Names:** list character names and terms so the model always translates them the same way.
 - The model also sees the previous few lines of dialogue, so it can follow the conversation. Translated lines are cached and appear instantly next time.
 
 ## Requirements
@@ -38,15 +38,15 @@ Translate on-screen Japanese, Chinese or Korean into English entirely on your ow
    ollama pull qwen3.5:4b
    ```
 
-4. Open `ScreenTranslator.exe`. For Chinese or Korean, choose the language on the `Cài đặt` (Settings) page; the model changes with it.
+4. Open `ScreenTranslator.exe`. For Chinese or Korean, choose the language on the Settings page; the model changes with it.
 
 The `.exe` is not code-signed, so Windows may show a SmartScreen warning. Click **More info**, then **Run anyway**. Some antivirus programs may also wrongly flag apps packaged with PyInstaller.
 
-To open the app from the Start menu or the desktop, or start it with Windows, use the `Cài đặt` (Settings) page. If you move the app folder, create these shortcuts again: untick them, save, then tick them again.
+To open the app from the Start menu or the desktop, or start it with Windows, use the Settings page. If you move the app folder, create these shortcuts again: untick them, save, then tick them again.
 
 ## Hotkeys
 
-You can change these on the `Phím tắt` (Hotkeys) page. Every action also has a button on the floating control panel.
+You can change these on the Hotkeys page. Every action also has a button on the floating control panel.
 
 | Key | Action |
 |---|---|

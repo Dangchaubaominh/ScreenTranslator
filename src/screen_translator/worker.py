@@ -15,6 +15,7 @@ from PySide6.QtCore import QObject, Signal
 from .cache import TranslationCache
 from .config import APP_DIR, GLOSSARY_PATH, Config
 from .glossary import Entry, Glossary, exact, relevant, signature
+from .i18n import tr
 from .layout import group_lines, has_cjk, similar
 from .ocr import OneOcrReader
 from .translate import tidy, translate, unload
@@ -22,7 +23,7 @@ from .translate import tidy, translate, unload
 log = logging.getLogger(__name__)
 CACHE_PATH = APP_DIR / "translations.sqlite3"
 UNTRANSLATED = "(không dịch được)"
-READY = "Sẵn sàng"  # trạng thái khi đã nạp xong OCR và model dịch
+READY = "Sẵn sàng"  # trạng thái khi đã nạp xong OCR và model dịch; trạng thái cố định do nơi hiển thị gọi tr()
 CONTEXT_TURNS = 4  # số lượt thoại ngay trước gửi kèm khi dịch, để model hiểu mạch hội thoại
 DIALOGUE = ("live", "dialogue")  # lượt dịch khung thoại (live mode, vùng tự chọn): dùng và ghi nhớ ngữ cảnh
 
@@ -42,9 +43,9 @@ class Item:
 def describe_error(error: Exception, model: str) -> str:
     """Thông báo lỗi dễ hiểu cho người dùng."""
     if isinstance(error, ConnectionError):
-        return "Không kết nối được Ollama. Hãy mở Ollama (chưa có thì cài từ ollama.com) rồi thử lại."
+        return tr("Không kết nối được Ollama. Hãy mở Ollama (chưa có thì cài từ ollama.com) rồi thử lại.")
     if isinstance(error, ollama.ResponseError) and error.status_code == 404:
-        return f"Chưa có model {model}. Chạy lệnh: ollama pull {model}"
+        return tr("Chưa có model {model}. Chạy lệnh: ollama pull {model}", model=model)
     return str(error)
 
 
@@ -148,7 +149,7 @@ class Worker(QObject):
         if kind == "text":
             items = [Item(payload.strip())] if has_cjk(payload) else []
         elif self._reader is None:
-            self.failed.emit(job_id, "Chưa nạp được OCR, xem file log.")
+            self.failed.emit(job_id, tr("Chưa nạp được OCR, xem file log."))
             return
         else:
             image = payload[0] if kind == "live" else payload
@@ -174,7 +175,7 @@ class Worker(QObject):
             if kind == "page":  # cuộn tới chỗ không có chữ: bỏ bản dịch cũ đi
                 self.result.emit(job_id, [], True)
             else:
-                self.failed.emit(job_id, "Không thấy chữ cần dịch trong vùng này.")
+                self.failed.emit(job_id, tr("Không thấy chữ cần dịch trong vùng này."))
             return
 
         glossary = self._read_glossary()
@@ -207,7 +208,8 @@ class Worker(QObject):
             return self._glossary.entries()
         except (OSError, UnicodeDecodeError) as e:
             log.warning("Không đọc được glossary: %s", e)
-            self.status.emit(f"Không đọc được {self._glossary.path.name} (cần lưu dạng UTF-8): {e}", True)
+            message = tr("Không đọc được {file} (cần lưu dạng UTF-8): {error}", file=self._glossary.path.name, error=e)
+            self.status.emit(message, True)
             return []
 
     def _known(self, ja: str, glossary: list[Entry]) -> str | None:
@@ -217,7 +219,7 @@ class Worker(QObject):
 
     def _remember(self, items: list[Item]) -> None:
         """Cả khung thoại vừa hiện thành một lượt ngữ cảnh cho câu sau; bấm Dịch lại cùng câu thì không ghi thêm."""
-        shown = [item for item in items if item.en != UNTRANSLATED]
+        shown = [item for item in items if item.en != tr(UNTRANSLATED)]
         turn = ("\n".join(item.ja for item in shown), "\n".join(item.en for item in shown))
         if shown and not any(similar(turn[0], ja) for ja, _ in self._context):
             self._context.append(turn)
@@ -234,10 +236,10 @@ class Worker(QObject):
             if e.status_code == 404:  # thiếu model: cả lượt đều hỏng, báo lên
                 raise
             log.warning("Không dịch được %r: %s", ja, e)  # vd. model lặp chữ bị Ollama ngắt; bỏ qua khối này
-            return UNTRANSLATED
+            return tr(UNTRANSLATED)
         en = tidy(text)
         if not en:
-            return UNTRANSLATED
+            return tr(UNTRANSLATED)
         self._cache.put(self._config.model, ja, en, glossary=signature(relevant(glossary, ja)))
         return en
 
@@ -248,7 +250,7 @@ class Worker(QObject):
             self._reader = OneOcrReader()
         except Exception as e:
             log.exception("Nạp OCR lỗi")
-            self.status.emit(f"Nạp OCR lỗi: {e}", True)
+            self.status.emit(tr("Nạp OCR lỗi: {error}", error=e), True)
             return
         log.info("Nạp OneOCR mất %.1fs", time.perf_counter() - start)
 

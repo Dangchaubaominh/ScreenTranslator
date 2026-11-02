@@ -12,6 +12,7 @@ from pathlib import Path
 from PySide6.QtCore import QStandardPaths
 
 from .config import APP_DIR
+from .i18n import tr
 
 NAME = "ScreenTranslator.lnk"
 LABELS = {
@@ -110,7 +111,7 @@ def create(path: Path, target: Path, arguments: str, icon: Path) -> None:
         com_call(link, SET_PATH, text, str(target))
         com_call(link, SET_ARGUMENTS, text, arguments)
         com_call(link, SET_WORKING_DIRECTORY, text, str(target.parent))
-        com_call(link, SET_DESCRIPTION, text, DESCRIPTION)
+        com_call(link, SET_DESCRIPTION, text, tr(DESCRIPTION))
         com_call(link, SET_ICON_LOCATION, (wintypes.LPCWSTR, ctypes.c_int), str(icon), 0)
         guid = GUID.parse(IID_PERSIST_FILE)
         com_call(link, QUERY_INTERFACE, (ctypes.c_void_p, ctypes.c_void_p), ctypes.byref(guid), ctypes.byref(file))

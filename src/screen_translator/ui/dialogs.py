@@ -9,6 +9,7 @@ from PySide6.QtWidgets import QDialog, QHBoxLayout, QLabel, QPlainTextEdit, QPus
 from .. import win32
 from ..config import GLOSSARY_PATH
 from ..glossary import Entry, Glossary, clean, format_line, update_file, valid_ja
+from ..i18n import tr
 from .window import BG, STYLE, TermForm
 
 log = logging.getLogger(__name__)
@@ -21,7 +22,7 @@ class EditDialog(QDialog):
 
     def __init__(self):
         super().__init__(None, Qt.WindowType.WindowStaysOnTopHint)
-        self.setWindowTitle("Sửa chữ OCR — ScreenTranslator")
+        self.setWindowTitle(tr("Sửa chữ OCR — ScreenTranslator"))
         self.setStyleSheet(STYLE)
         self.resize(560, 460)
         self._glossary = Glossary(GLOSSARY_PATH)
@@ -34,11 +35,11 @@ class EditDialog(QDialog):
         self._term_message.hide()
 
         # không nút nào là nút mặc định: Enter ở hàng thêm tên chỉ để thêm tên
-        translate_button = QPushButton("Dịch lại", objectName="primary", autoDefault=False)
+        translate_button = QPushButton(tr("Dịch lại"), objectName="primary", autoDefault=False)
         translate_button.clicked.connect(self._retranslate)
-        copy_ja = QPushButton("Copy chữ gốc", autoDefault=False)
+        copy_ja = QPushButton(tr("Copy chữ gốc"), autoDefault=False)
         copy_ja.clicked.connect(lambda: QGuiApplication.clipboard().setText(self._ja.toPlainText()))
-        copy_en = QPushButton("Copy bản dịch", autoDefault=False)
+        copy_en = QPushButton(tr("Copy bản dịch"), autoDefault=False)
         copy_en.clicked.connect(lambda: QGuiApplication.clipboard().setText(self._en.toPlainText()))
 
         buttons = QHBoxLayout()
@@ -46,11 +47,11 @@ class EditDialog(QDialog):
             buttons.addWidget(button)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(16, 14, 16, 14)
-        layout.addWidget(QLabel("Chữ gốc (sửa được nếu OCR đọc sai):"))
+        layout.addWidget(QLabel(tr("Chữ gốc (sửa được nếu OCR đọc sai):")))
         layout.addWidget(self._ja)
-        layout.addWidget(QLabel("Bản dịch:"))
+        layout.addWidget(QLabel(tr("Bản dịch:")))
         layout.addWidget(self._en)
-        layout.addWidget(QLabel("Tên dịch sai: bôi đen tên đó ở ô chữ gốc, gõ tên đúng rồi Enter."))
+        layout.addWidget(QLabel(tr("Tên dịch sai: bôi đen tên đó ở ô chữ gốc, gõ tên đúng rồi Enter.")))
         layout.addLayout(self._term)
         layout.addWidget(self._term_message)
         layout.addLayout(buttons)
@@ -61,7 +62,7 @@ class EditDialog(QDialog):
         self._en.setPlainText(en)
 
     def set_busy(self) -> None:
-        self._en.setPlainText("Đang dịch…")
+        self._en.setPlainText(tr("Đang dịch…"))
 
     def _retranslate(self) -> None:
         self.retranslate.emit(self._ja.toPlainText())
@@ -89,16 +90,17 @@ class EditDialog(QDialog):
         if entry is None:
             return
         if not valid_ja(entry.ja):
-            self._show_term_message("Chữ gốc không được có dấu = hay bắt đầu bằng #.", error=True)
+            self._show_term_message(tr("Chữ gốc không được có dấu = hay bắt đầu bằng #."), error=True)
             return
         try:
             update_file(GLOSSARY_PATH, [], [entry])
         except (OSError, UnicodeError) as e:
             log.exception("Không ghi được glossary")
-            self._show_term_message(f"Không ghi được {GLOSSARY_PATH.name} (cần lưu dạng UTF-8): {e}", error=True)
+            message = tr("Không ghi được {file} (cần lưu dạng UTF-8): {error}", file=GLOSSARY_PATH.name, error=e)
+            self._show_term_message(message, error=True)
             return
         self._term.clear()
-        self._show_term_message(f"Đã lưu vào tên riêng: {format_line(entry)}")
+        self._show_term_message(tr("Đã lưu vào tên riêng: {line}", line=format_line(entry)))
         if self._ja.toPlainText().strip():
             self._retranslate()
 

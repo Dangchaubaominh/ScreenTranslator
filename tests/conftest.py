@@ -4,6 +4,8 @@ import time
 import pytest
 from PySide6.QtWidgets import QApplication
 
+from screen_translator.i18n import set_language
+
 # Chạy giao diện không cần màn hình thật; phải đặt trước khi tạo QApplication
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -11,6 +13,14 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 @pytest.fixture(scope="session")
 def qapp():
     return QApplication.instance() or QApplication([])
+
+
+@pytest.fixture
+def english():
+    """Giao diện tiếng Anh trong lúc chạy test, xong thì trả về mặc định."""
+    set_language("en")
+    yield
+    set_language("vi")
 
 
 def wait_until(app: QApplication, predicate, timeout: float = 5.0) -> None:

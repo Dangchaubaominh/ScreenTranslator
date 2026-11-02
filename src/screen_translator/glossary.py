@@ -13,9 +13,11 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
+from .i18n import tr
+
 log = logging.getLogger(__name__)
 GENDERS = {"nữ": "Female", "nam": "Male", "female": "Female", "male": "Male"}
-GENDER_WORDS = {"Female": "nữ", "Male": "nam"}  # ghi vào file
+GENDER_WORDS = {"Female": "nữ", "Male": "nam"}  # ghi vào file, theo ngôn ngữ giao diện
 # "Save (Quick)" không phải giới tính nên cả cụm là bản dịch; chấp nhận cả dấu ＝ gõ bằng bộ gõ tiếng Nhật
 _LINE = re.compile(r"(?P<ja>[^=＝]+?)\s*[=＝]\s*(?P<en>.+?)(?:\s*\((?P<gender>nữ|nam|female|male)\))?", re.IGNORECASE)
 
@@ -92,7 +94,7 @@ def ensure_file(path: Path) -> Path:
     """Tạo file kèm hướng dẫn nếu chưa có, để người dùng mở ra sửa."""
     if not path.exists():
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(TEMPLATE, encoding="utf-8")
+        path.write_text(tr(TEMPLATE), encoding="utf-8")
     return path
 
 
@@ -107,7 +109,7 @@ def valid_ja(ja: str) -> bool:
 
 
 def format_line(entry: Entry) -> str:
-    gender = f" ({GENDER_WORDS[entry.gender]})" if entry.gender else ""
+    gender = f" ({tr(GENDER_WORDS[entry.gender])})" if entry.gender else ""
     return f"{entry.ja} = {entry.en}{gender}"
 
 

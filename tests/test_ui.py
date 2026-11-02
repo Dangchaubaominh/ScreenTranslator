@@ -355,6 +355,9 @@ class FakeWorker(QObject):
     def reset_live(self):
         self.live_resets += 1
 
+    def reconfigure(self, config):
+        pass
+
 
 def make_tray_app(monkeypatch, config: Config | None = None):
     monkeypatch.setattr(app_module, "Worker", FakeWorker)
@@ -365,6 +368,46 @@ def make_tray_app(monkeypatch, config: Config | None = None):
     messages = []
     monkeypatch.setattr(tray_app, "notify", lambda message, **_: messages.append(message))
     return tray_app, messages
+
+
+def test_switching_interface_language_rebuilds_menu_and_panel(qapp, monkeypatch, english):
+    tray_app, _ = make_tray_app(monkeypatch)
+    assert tray_app.panel.buttons["select"].text() == "Chọn vùng"
+    tray_app.set_panel_visible(True)
+    old_panel = tray_app.panel
+    tray_app._apply_config(Config(ui_language="en"))
+    tray_app.on_status(READY, False)
+    assert tray_app.panel is not old_panel and tray_app.panel.isVisible()
+    assert tray_app.panel.buttons["select"].text() == "Select region"
+    assert tray_app.panel.buttons["select"].toolTip() == "Select a new region and translate (Ctrl+Alt+T)"
+    assert tray_app.tray.contextMenu() is tray_app.menu
+    assert tray_app._menu_actions["select"].text() == "Select a new region and translate\tCtrl+Alt+T"
+    assert tray_app._panel_action.isChecked()
+    assert tray_app.tray.toolTip() == "ScreenTranslator — Ready"
+    assert [a.text() for a in tray_app.menu.actions() if any("À" <= c <= "ỹ" for c in a.text())] == []
+    tray_app.panel.hide()
+    tray_app.hotkeys.clear()
+
+
+def test_panel_saved_near_the_edge_stays_on_screen(qapp, monkeypatch):
+    # đổi ngôn ngữ thì thanh rộng ra: chỗ đã kéo tới có thể không còn vừa
+    right = qapp.primaryScreen().availableGeometry().right()
+    tray_app, _ = make_tray_app(monkeypatch, Config(panel_pos=(right - 10, 50)))
+    tray_app.set_panel_visible(True)
+    assert tray_app.panel.x() < right - 10 and tray_app.panel.y() == 50
+    tray_app.panel.hide()
+    tray_app.hotkeys.clear()
+
+
+def test_interface_language_is_used_from_startup_and_saved(qapp, monkeypatch, english):
+    tray_app, _ = make_tray_app(monkeypatch, Config(ui_language="en"))
+    assert tray_app.panel.buttons["screen"].text() == "Whole window"
+    tray_app.hotkeys.clear()
+    dialog = MainWindow(Config(), [])
+    dialog._ui_language.setCurrentIndex(dialog._ui_language.findData("vi"))
+    assert dialog.result_config() == Config()
+    dialog._ui_language.setCurrentIndex(dialog._ui_language.findData("en"))
+    assert dialog.result_config() == Config(ui_language="en")
 
 
 def test_selected_region_with_one_block_is_covered_whole(qapp, monkeypatch):
@@ -1069,7 +1112,7 @@ def test_pause_gives_hotkeys_back_and_resume_restores_live_mode(qapp, monkeypatc
 def test_live_mode_puts_the_control_panel_away_until_esc(qapp, monkeypatch):
     monkeypatch.setattr(app_module.win32, "register_hotkey", lambda *args: True)
     monkeypatch.setattr(app_module.win32, "unregister_hotkey", lambda *args: None)
-    tray_app, messages = make_tray_app(monkeypatch, Config(panel_pos=(40, 50)))
+    tray_app, messages = make_tray_app(monkeypatch, Config(panel_pos=(0, 50)))
     panel, hotkeys = tray_app.panel, tray_app.hotkeys
     assert "pause" not in panel.buttons  # tạm dừng chỉ còn trong menu
     tray_app.set_panel_visible(True)
@@ -1080,7 +1123,7 @@ def test_live_mode_puts_the_control_panel_away_until_esc(qapp, monkeypatch):
     assert tray_app.live_timer.isActive() and not panel.isVisible() and not tray_app._panel_action.isChecked()
     assert "Esc" in messages[-1]
     hotkeys.triggered.emit("escape")
-    assert not tray_app.live_timer.isActive() and panel.isVisible() and panel.pos() == QPoint(40, 50)
+    assert not tray_app.live_timer.isActive() and panel.isVisible() and panel.pos() == QPoint(0, 50)
     assert tray_app._panel_action.isChecked()
 
     tray_app.toggle_live()
@@ -1094,7 +1137,7 @@ def test_live_mode_puts_the_control_panel_away_until_esc(qapp, monkeypatch):
 
 
 def test_control_panel_does_everything_by_mouse(qapp, monkeypatch):
-    tray_app, _ = make_tray_app(monkeypatch, Config(panel_pos=(40, 50)))
+    tray_app, _ = make_tray_app(monkeypatch, Config(panel_pos=(0, 50)))
     saved = []
     monkeypatch.setattr(app_module.config_store, "save", saved.append)
     panel, calls = tray_app.panel, []
@@ -1104,7 +1147,7 @@ def test_control_panel_does_everything_by_mouse(qapp, monkeypatch):
     assert calls == ["select", "screen", "repeat", "live", "toggle"]
 
     tray_app._on_tray_activated(QSystemTrayIcon.ActivationReason.Trigger)  # bấm icon ở khay
-    assert panel.isVisible() and panel.pos() == QPoint(40, 50) and tray_app._panel_action.isChecked()
+    assert panel.isVisible() and panel.pos() == QPoint(0, 50) and tray_app._panel_action.isChecked()
     panel.grab()  # vẽ thử được
 
     panel.transparency.setValue(70)

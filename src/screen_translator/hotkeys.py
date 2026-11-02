@@ -10,6 +10,7 @@ from PySide6.QtCore import Signal
 from PySide6.QtWidgets import QWidget
 
 from . import win32
+from .i18n import tr
 
 log = logging.getLogger(__name__)
 _MODIFIERS = {"ctrl": win32.MOD_CONTROL, "alt": win32.MOD_ALT, "shift": win32.MOD_SHIFT, "win": win32.MOD_WIN}
@@ -31,15 +32,15 @@ def parse_hotkey(text: str) -> tuple[int, int]:
     modifiers = 0
     for name in modifier_names:
         if name.lower() not in _MODIFIERS:
-            raise ValueError(f"phím bổ trợ không hợp lệ: {name!r} (dùng Ctrl, Alt, Shift, Win)")
+            raise ValueError(tr("phím bổ trợ không hợp lệ: {name!r} (dùng Ctrl, Alt, Shift, Win)", name=name))
         modifiers |= _MODIFIERS[name.lower()]
     if not modifiers:
-        raise ValueError("cần ít nhất một phím Ctrl / Alt / Shift / Win")
+        raise ValueError(tr("cần ít nhất một phím Ctrl / Alt / Shift / Win"))
     if len(key) == 1 and key.isascii() and key.isalnum():
         return modifiers, ord(key.upper())
     if key.lower() in _NAMED_KEYS:
         return modifiers, _NAMED_KEYS[key.lower()]
-    raise ValueError(f"phím không hợp lệ: {key!r} (dùng A–Z, 0–9, F1–F12, Space…)")
+    raise ValueError(tr("phím không hợp lệ: {key!r} (dùng A–Z, 0–9, F1–F12, Space…)", key=key))
 
 
 class HotkeyWindow(QWidget):
@@ -67,7 +68,7 @@ class HotkeyWindow(QWidget):
             if win32.register_hotkey(self._hwnd, hotkey_id, modifiers | win32.MOD_NOREPEAT, vk):
                 self._actions[hotkey_id] = action
             else:
-                errors.append(f"{text}: chương trình khác đang dùng phím tắt này")
+                errors.append(tr("{text}: chương trình khác đang dùng phím tắt này", text=text))
         return errors
 
     def set_escape(self, held: bool) -> None:

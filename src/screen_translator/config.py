@@ -6,6 +6,7 @@ import re
 from dataclasses import asdict, dataclass, fields, replace
 from pathlib import Path
 
+from .i18n import UI_LANGUAGES
 from .translate import DEFAULT_MODEL, LANGUAGES
 
 APP_DIR = Path(os.environ.get("APPDATA", Path.home())) / "ScreenTranslator"
@@ -43,6 +44,7 @@ OPACITY_RANGE = (0, 100)
 class Config:
     model: str = DEFAULT_MODEL
     language: str = "ja"  # ngôn ngữ của chữ trên màn hình, một khóa của LANGUAGES
+    ui_language: str = "vi"  # ngôn ngữ giao diện, một khóa của UI_LANGUAGES
     profile: str = "light"
     hotkey_select: str = "Ctrl+Alt+T"
     hotkey_screen: str = "Ctrl+Alt+F"
@@ -83,6 +85,7 @@ def load(path: Path = CONFIG_PATH) -> Config:
     return replace(
         config,
         language=config.language if config.language in LANGUAGES else Config.language,
+        ui_language=config.ui_language if config.ui_language in UI_LANGUAGES else Config.ui_language,
         profile=config.profile if config.profile in PROFILES else Config.profile,
         overlay_color=config.overlay_color if valid_color else Config.overlay_color,
         panel_pos=tuple(pos) if valid_pos else None,

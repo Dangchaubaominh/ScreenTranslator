@@ -23,6 +23,14 @@ REIMU, MARISA, GENSOKYO = (
 )
 
 
+def test_new_entries_and_the_template_follow_the_interface_language(tmp_path, english):
+    path = tmp_path / "glossary.txt"
+    update_file(path, [], [Entry("霊夢", "Reimu", "Female")])
+    text = path.read_text(encoding="utf-8")
+    assert text.startswith("# Names and terms") and text.endswith("霊夢 = Reimu (female)\n")
+    assert parse(text) == [Entry("霊夢", "Reimu", "Female")]
+
+
 def test_parse_names_terms_and_comments():
     text = (
         "# chú thích\n"

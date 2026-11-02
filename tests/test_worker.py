@@ -10,6 +10,7 @@ from PIL import Image
 from screen_translator import worker as worker_module
 from screen_translator.config import Config
 from screen_translator.glossary import Entry
+from screen_translator.i18n import tr
 from screen_translator.layout import TextBox
 from screen_translator.worker import UNTRANSLATED, Item, Worker, describe_error
 
@@ -324,6 +325,22 @@ def test_reports_when_oneocr_is_missing(qapp, fake, monkeypatch):
     w.stop()
     assert any("không tìm thấy OneOCR" in message and is_error for message, is_error in events["status"])
     assert events["failed"] == [(job, "Chưa nạp được OCR, xem file log.")]
+
+
+def test_messages_follow_the_interface_language(qapp, fake, english):
+    fake["fail"]["猫"] = ollama.ResponseError("loop", 500)
+    w, events = start(qapp)
+    job = w.submit_image(screen(VERSION))  # không có chữ cần dịch
+    wait_until(qapp, lambda: events["failed"])
+    w.submit_text("猫")
+    wait_until(qapp, lambda: finished(events))
+    w.stop()
+    assert events["failed"] == [(job, "No text to translate in this region.")]
+    assert finished(events)[0][1][0].en == "(could not translate)"
+    statuses = [tr(status) for status, _ in events["status"]]
+    assert statuses == ["Loading OneOCR…", "Loading the translation model…", "Ready"]
+    assert describe_error(ConnectionError(), "m").startswith("Could not connect to Ollama")
+    assert describe_error(ollama.ResponseError("x", 404), "m") == "The model m is not installed. Run: ollama pull m"
 
 
 def test_reconfigure_switches_model(qapp, fake):

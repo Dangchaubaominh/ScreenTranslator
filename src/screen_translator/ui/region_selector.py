@@ -5,6 +5,8 @@ from PySide6.QtCore import QPoint, QRect, Qt, Signal
 from PySide6.QtGui import QColor, QFont, QImage, QPainter, QPen, QPixmap, QScreen
 from PySide6.QtWidgets import QWidget
 
+from ..i18n import tr
+
 MIN_SIZE = 8  # vùng nhỏ hơn (tính theo pixel logic) coi như bấm nhầm
 HINT = "Kéo chuột để khoanh vùng chữ  ·  Esc hoặc chuột phải để huỷ"
 
@@ -50,7 +52,7 @@ class RegionSelector(QWidget):
             font = QFont("Segoe UI")
             font.setPixelSize(18)
             painter.setFont(font)
-            painter.drawText(self.rect().adjusted(0, 40, 0, 0), Qt.AlignmentFlag.AlignHCenter, HINT)
+            painter.drawText(self.rect().adjusted(0, 40, 0, 0), Qt.AlignmentFlag.AlignHCenter, tr(HINT))
             return
         painter.setClipRect(rect)
         painter.drawPixmap(0, 0, self._pixmap)  # vùng đang chọn sáng lại
