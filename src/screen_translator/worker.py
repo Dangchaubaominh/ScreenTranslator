@@ -42,7 +42,7 @@ class Item:
 def describe_error(error: Exception, model: str) -> str:
     """Thông báo lỗi dễ hiểu cho người dùng."""
     if isinstance(error, ConnectionError):
-        return "Không kết nối được Ollama. Hãy mở Ollama rồi thử lại."
+        return "Không kết nối được Ollama. Hãy mở Ollama (chưa có thì cài từ ollama.com) rồi thử lại."
     if isinstance(error, ollama.ResponseError) and error.status_code == 404:
         return f"Chưa có model {model}. Chạy lệnh: ollama pull {model}"
     return str(error)

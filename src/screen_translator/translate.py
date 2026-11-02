@@ -1,4 +1,4 @@
-"""Dịch JA→EN qua Ollama. Mỗi loại model cần một kiểu prompt riêng (xem PLAN.md mục 6)."""
+"""Dịch JA→EN qua Ollama. Mỗi loại model cần một kiểu prompt riêng."""
 
 from collections.abc import Sequence
 

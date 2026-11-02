@@ -512,6 +512,7 @@ class MainWindow(QDialog):
         self.setMinimumSize(760, 520)
         self.welcome = welcome
         self._config = config
+        self._needs_setup = config.model not in installed_models  # chưa có Ollama hoặc chưa tải model dịch
         self._chips: dict[str, list[QLabel]] = {}  # phím tắt in trong trang hướng dẫn, đổi theo ô sửa phím tắt
 
         self._hotkeys = {action: QLineEdit(text, objectName="keyedit") for action, text in config.hotkeys.items()}
@@ -635,6 +636,22 @@ class MainWindow(QDialog):
         layout.addLayout(grid)
         return card
 
+    def _setup_card(self) -> QGroupBox:
+        link = f'<a style="color:{ACCENT}" href="https://ollama.com/download">Ollama</a>'
+        pull = f"<b>ollama pull {self._config.model}</b>"
+        card = self._steps(
+            "Chuẩn bị một lần",
+            [
+                (f"Cài {link}. Đã cài rồi thì mở nó lên.", None),
+                (f"Mở Terminal, chạy lệnh tải model dịch (model mặc định khoảng 2,2 GB):<br>{pull}", None),
+                ("Bấm <b>Bắt đầu</b> rồi dịch thử.", None),
+            ],
+        )
+        for label in card.findChildren(QLabel):  # bôi đen chép được lệnh, bấm mở được link
+            label.setTextInteractionFlags(Qt.TextInteractionFlag.TextBrowserInteraction)
+            label.setOpenExternalLinks(True)
+        return card
+
     def _guide_page(self) -> QScrollArea:
         tips, layout = _card("Mẹo")
         for text in (
@@ -652,6 +669,7 @@ class MainWindow(QDialog):
         return self._page(
             "Hướng dẫn",
             "Mọi nút đều có trên thanh điều khiển nổi; phím tắt dùng được cả lúc đang chơi.",
+            *([self._setup_card()] if self._needs_setup else []),
             self._steps(
                 "Visual novel",
                 [

@@ -1,0 +1,29 @@
+ScreenTranslator is released under the MIT License (see LICENSE).
+The packaged app also contains the third-party software below, each under its own license.
+
+PySide6, Shiboken6 and Qt 6 - LGPL-3.0-only - (c) The Qt Company Ltd. and contributors
+  License texts: licenses/LGPL-3.0.txt and licenses/GPL-3.0.txt.
+  Used unmodified. They are separate shared libraries in the _internal folder, so you can
+  replace them with your own compatible build.
+  Source code: https://code.qt.io/cgit/qt/qt5.git and https://code.qt.io/cgit/pyside/pyside-setup.git
+
+Python packages
+  annotated-types, anyio, certifi, h11, httpcore, httpx, idna, mss, numpy, ollama,
+  pillow, pydantic, pydantic-core, typing-extensions, typing-inspection.
+  Each package's license is in _internal/<package>-<version>.dist-info/licenses/.
+
+oneocr - MIT, as declared in its package metadata - Aurora Wright, Cecilia-pj, b1tg
+  https://github.com/AuroraWright/oneocr
+  This package ships no license file; its metadata is in _internal/oneocr-<version>.dist-info/.
+
+Python 3.12 runtime - PSF-2.0 - (c) Python Software Foundation
+  https://docs.python.org/3.12/license.html
+
+PyInstaller bootloader - GPL-2.0-or-later with an exception that allows distributing packaged
+  apps under any license
+  https://github.com/pyinstaller/pyinstaller/blob/develop/COPYING.txt
+
+NOT included, and covered by their owners' own terms:
+  OneOCR engine files (Microsoft): copied at first run from the Snipping Tool already on your computer.
+  Ollama: installed separately by you.
+  The translation model: downloaded separately by you through Ollama.

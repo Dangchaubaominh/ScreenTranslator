@@ -5,7 +5,7 @@ cách điệu và chữ xám mờ trên ảnh game thật. Là thành phần n�
 đời sau có thể đổi file làm thư viện oneocr không đọc được; khi đó app báo lỗi.
 
 Chữ Nhật nhỏ (trang manga thu nhỏ trên web) đọc sai nhiều hơn, nên phóng to ảnh rồi đọc lại. Chỉ làm khi chữ nhỏ:
-phóng to chữ đã đủ to thì đọc kém đi (số đo ở PLAN.md).
+phóng to chữ đã đủ to thì đọc kém đi.
 """
 
 import logging

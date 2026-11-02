@@ -12,15 +12,15 @@ APP_DIR = Path(os.environ.get("APPDATA", Path.home())) / "ScreenTranslator"
 CONFIG_PATH = APP_DIR / "config.json"
 GLOSSARY_PATH = APP_DIR / "glossary.txt"  # tên riêng, thuật ngữ: sửa ở trang Tên riêng hoặc bằng Notepad
 
-# Hồ sơ hiệu năng (PLAN.md mục 7)
+# Hồ sơ hiệu năng
 PROFILES = {
-    "light": {  # game chạy trên Iris Xe, RTX 3050 dành cho dịch
-        "label": "Nhẹ — game chạy trên Iris Xe, dịch bằng RTX 3050",
+    "light": {  # game nhẹ: card đồ họa dành cho dịch
+        "label": "Game nhẹ — dịch bằng card đồ họa, nhanh hơn",
         "ollama_options": {},
         "keep_alive": "30m",
     },
-    "heavy": {  # game cần RTX 3050, dịch chạy CPU
-        "label": "Nặng — game dùng RTX 3050, dịch bằng CPU",
+    "heavy": {  # game cần card đồ họa: dịch chạy CPU
+        "label": "Game nặng — dịch bằng CPU, nhường card đồ họa cho game",
         "ollama_options": {"num_gpu": 0},
         "keep_alive": "5m",
     },

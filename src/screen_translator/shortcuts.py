@@ -1,7 +1,7 @@
 """Mở app không cần terminal: shortcut ở menu Start, Desktop và thư mục Startup (tự chạy khi mở Windows).
 
-Shortcut trỏ tới screen-translator-gui.exe, bản không mở cửa sổ console mà uv tạo từ [project.gui-scripts].
-Tự chạy dùng thư mục Startup chứ không ghi registry, nên tắt được cả ở Task Manager → Startup apps.
+Shortcut trỏ tới file .exe của bản đóng gói; chạy từ mã nguồn thì trỏ tới screen-translator-gui.exe, bản không mở
+cửa sổ console mà uv tạo từ [project.gui-scripts]. Tự chạy dùng thư mục Startup chứ không ghi registry, nên tắt được cả ở Task Manager → Startup apps.
 """
 
 import ctypes
@@ -59,6 +59,8 @@ def com_call(obj: ctypes.c_void_p, index: int, argtypes: tuple, *args, restype=c
 
 
 def launcher() -> Path:
+    if getattr(sys, "frozen", False):  # bản đóng gói bằng PyInstaller
+        return Path(sys.executable)
     return Path(sys.prefix) / "Scripts" / "screen-translator-gui.exe"
 
 

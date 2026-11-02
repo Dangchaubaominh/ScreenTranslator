@@ -1,4 +1,5 @@
 import subprocess
+import sys
 
 from screen_translator import shortcuts
 
@@ -28,6 +29,14 @@ def test_locations_are_start_menu_desktop_and_startup(qapp):
     assert paths["start_menu"].parent.name == "Programs" and "Start Menu" in str(paths["start_menu"])
     assert paths["autostart"].parent == paths["start_menu"].parent / "Startup"
     assert all(path.name == "ScreenTranslator.lnk" for path in paths.values())
+
+
+def test_shortcuts_point_at_the_packaged_exe_when_frozen(tmp_path, monkeypatch):
+    assert shortcuts.launcher().name == "screen-translator-gui.exe"
+    exe = tmp_path / "ScreenTranslator.exe"
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setattr(sys, "executable", str(exe))
+    assert shortcuts.launcher() == exe
 
 
 def test_apply_creates_and_removes_shortcuts(tmp_path, monkeypatch):

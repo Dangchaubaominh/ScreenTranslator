@@ -8,7 +8,7 @@ from PIL import Image
 from PySide6.QtCore import QObject, QPoint, QPointF, QRect, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import QTextCursor, QWheelEvent
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication, QDialog, QLabel, QLineEdit, QMenu, QPushButton, QSystemTrayIcon
+from PySide6.QtWidgets import QApplication, QDialog, QGroupBox, QLabel, QLineEdit, QMenu, QPushButton, QSystemTrayIcon
 
 from screen_translator import app as app_module
 from screen_translator.config import Config
@@ -275,6 +275,16 @@ def test_guide_shows_the_hotkeys_being_edited(qapp):
     assert chips.count("Ctrl+Alt+T") == 1 and chips.count("Ctrl+Alt+L") == 2
     dialog.findChildren(QLineEdit, "keyedit")[0].setText("Ctrl+Shift+Q")  # sửa phím Chọn vùng ở trang Phím tắt
     assert "Ctrl+Shift+Q" in [chip.text() for chip in dialog.findChildren(QLabel, "key")]
+
+
+def test_guide_explains_the_setup_only_when_the_model_is_missing(qapp):
+    def setup_cards(installed):
+        cards = MainWindow(Config(model="abc:1b"), installed).findChildren(QGroupBox)
+        return [card for card in cards if card.title() == "Chuẩn bị một lần"]
+
+    assert setup_cards(["abc:1b"]) == []
+    card = setup_cards(["other:2b"])[0]  # Ollama không chạy cũng ra danh sách rỗng như thế này
+    assert any("ollama pull abc:1b" in label.text() for label in card.findChildren(QLabel))
 
 
 def test_settings_saves_valid_hotkeys(qapp):

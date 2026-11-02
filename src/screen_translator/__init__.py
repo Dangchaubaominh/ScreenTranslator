@@ -8,6 +8,10 @@ from pathlib import Path
 
 
 def main() -> None:
+    for stream in (sys.stdout, sys.stderr):
+        if stream:  # không có khi chạy không cửa sổ console (pythonw, bản đóng gói)
+            stream.reconfigure(encoding="utf-8", errors="replace")
+
     parser = argparse.ArgumentParser(prog="screen-translator", description=__doc__)
     parser.add_argument("--image", type=Path, help="đọc và dịch một file ảnh rồi thoát, không mở giao diện")
     parser.add_argument("--autostart", action="store_true", help="chạy lúc mở Windows: chỉ có icon ở khay")
@@ -17,8 +21,7 @@ def main() -> None:
 
     APP_DIR.mkdir(parents=True, exist_ok=True)
     handlers: list[logging.Handler] = [logging.FileHandler(APP_DIR / "screen-translator.log", encoding="utf-8")]
-    if sys.stderr:  # không có khi chạy bằng pythonw
-        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    if sys.stderr:
         handlers.append(logging.StreamHandler())
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s", handlers=handlers)
 
@@ -41,7 +44,6 @@ def translate_file(path: Path) -> None:
     from .ocr import OneOcrReader
     from .translate import tidy, translate
 
-    sys.stdout.reconfigure(encoding="utf-8")
     cfg = config.load()
     glossary = Glossary(config.GLOSSARY_PATH).entries()
     reader = OneOcrReader()

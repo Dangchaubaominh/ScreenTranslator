@@ -202,7 +202,7 @@ def test_errors_are_reported_in_plain_words(qapp, fake):
     w.stop()
     assert events["failed"] == [
         (empty, "Không thấy chữ tiếng Nhật trong vùng này."),
-        (job, "Không kết nối được Ollama. Hãy mở Ollama rồi thử lại."),
+        (job, "Không kết nối được Ollama. Hãy mở Ollama (chưa có thì cài từ ollama.com) rồi thử lại."),
     ]
 
 

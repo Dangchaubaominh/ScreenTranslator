@@ -2,8 +2,11 @@
 name = "screen-translator"
 version = "0.1.0"
 description = "Dịch chữ tiếng Nhật trên màn hình sang tiếng Anh, chạy offline (OCR + Ollama)"
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
 authors = [
-    { name = "Dangchaubaominh", email = "142299490+Dangchaubaominh@users.noreply.github.com" }
+    { name = "Dangchaubaominh" }
 ]
 requires-python = ">=3.12,<3.13"
 dependencies = [
@@ -17,6 +20,7 @@ dependencies = [
 
 [dependency-groups]
 bench = ["sacrebleu>=2.4"]
+build = ["pyinstaller>=6"]
 dev = [
     "pytest>=9.2.0",
     "ruff>=0.17.3",
